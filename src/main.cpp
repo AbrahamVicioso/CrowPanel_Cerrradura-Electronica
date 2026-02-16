@@ -5,6 +5,9 @@
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 #include <Wire.h>
 #include <Adafruit_PN532.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <string.h>
 
 // Pines I2C para PN532 (comparte bus con Touch)
 #define PN532_SDA 19
@@ -12,6 +15,36 @@
 
 // Pin del relay/cerradura
 #define LOCK_PIN 38
+
+// ============================================
+// CONFIGURACIÓN THINGBOARD - WiFi y MQTT
+// ============================================
+
+// WiFi Configuration
+const char* ssid = "HABITACIONES";          // Your WiFi name
+const char* password = "Mixael2003";  // Your WiFi password
+
+// ThingBoard Configuration
+const char* thingsboard_server = "10.0.0.33";  // ThingBoard server IP
+const uint16_t thingsboard_port = 1883;              // MQTT port (non-TLS)
+const char* access_token = "2V13XV7QQz6s641kSpAn";      // ThingBoard device access token
+
+// Shared attribute name for lock state
+const char* LOCK_STATE_ATTR = "lockState";
+
+// MQTT Topics for ThingBoard
+const char* tb_attributes_topic = "v1/devices/me/attributes";     // Shared attributes
+const char* tb_telemetry_topic = "v1/devices/me/telemetry";     // Telemetry
+const char* tb_rpc_topic = "v1/devices/me/rpc/request/+";       // RPC requests
+
+// WiFi and MQTT clients
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
+
+// Connection status
+bool tbConnected = false;
+unsigned long lastConnectAttempt = 0;
+const unsigned long reconnectInterval = 5000;
 
 // Configuración de pantalla LCD
 class LGFX : public lgfx::LGFX_Device
@@ -165,12 +198,17 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
   delay(5);
 }
 
+// Forward declaration
+void publishLockState();
+
 // Funciones de control de cerradura
 void unlockDoor()
 {
   digitalWrite(LOCK_PIN, HIGH);
   isUnlocked = true;
   Serial.println("Cerradura desbloqueada");
+  // Publish state to ThingBoard
+  publishLockState();
 }
 
 void lockDoor()
@@ -178,6 +216,173 @@ void lockDoor()
   digitalWrite(LOCK_PIN, LOW);
   isUnlocked = false;
   Serial.println("Cerradura bloqueada");
+  // Publish state to ThingBoard
+  publishLockState();
+}
+
+// ============================================
+// FUNCIONES THINGBOARD CON SHARED ATTRIBUTES
+// ============================================
+
+// Forward declaration
+void publishLockState();
+
+// MQTT callback for RPC commands from ThingBoard
+void mqttCallback(char* topic, byte* payload, unsigned int length)
+{
+  Serial.print("Mensaje recibido en topic: ");
+  Serial.println(topic);
+  
+  // Parse RPC topic: v1/devices/me/rpc/request/{id}
+  String topicStr = String(topic);
+  if (topicStr.indexOf("rpc/request/") >= 0)
+  {
+    // Parse JSON payload
+    char message[length + 1];
+    memcpy(message, payload, length);
+    message[length] = '\0';
+    
+    Serial.print("Payload: ");
+    Serial.println(message);
+    
+    // Try to find method in JSON
+    // Look for "method":"name" or "methodName":"name"
+    String payloadStr = String(message);
+    int methodStart = payloadStr.indexOf("\"method\"");
+    if (methodStart < 0) methodStart = payloadStr.indexOf("\"methodName\"");
+    
+    if (methodStart >= 0)
+    {
+      // Find the method name
+      int nameStart = payloadStr.indexOf(":\"", methodStart) + 2;
+      int nameEnd = payloadStr.indexOf("\"", nameStart);
+      String methodName = payloadStr.substring(nameStart, nameEnd);
+      
+      Serial.print("Método: ");
+      Serial.println(methodName);
+      
+      // Handle commands
+      if (methodName == "unlockDoor" || methodName == "unlock" || methodName == "setLockState")
+      {
+        // Check for state parameter
+        bool unlock = true;
+        if (payloadStr.indexOf("\"state\"":false") >= 0 || payloadStr.indexOf("\"state\":false") >= 0)
+        {
+          unlock = false;
+        }
+        
+        if (unlock)
+        {
+          unlockDoor();
+        }
+        else
+        {
+          lockDoor();
+        }
+      }
+      else if (methodName == "lockDoor" || methodName == "lock")
+      {
+        lockDoor();
+      }
+      else if (methodName == "getLockState")
+      {
+        // Nothing to do here - the response would be sent separately
+      }
+    }
+  }
+}
+
+// Connect to ThingBoard MQTT
+void connectToThingBoard()
+{
+  // Check WiFi status
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("WiFi no conectado, reconectando...");
+    WiFi.begin(ssid, password);
+    return;
+  }
+
+  if (tb.connected())
+  {
+    return;
+  }
+
+  Serial.print("Conectando a ThingBoard MQTT...");
+  
+  // First configure the MQTT client
+  mqttClient.setServer(thingsboard_server, thingsboard_port);
+  mqttClient.setCallback(mqttCallback);
+  
+  // Connect using ThingsBoard (this configures the underlying MQTT client)
+  if (tb.connect(thingsboard_server, access_token, thingsboard_port))
+  {
+    Serial.println("Conectado a ThingBoard!");
+    
+    // Subscribe to RPC topics
+    String rpcTopic = String("v1/devices/me/rpc/request/+");
+    if (mqttClient.subscribe(rpcTopic.c_str()))
+    {
+      Serial.println("Suscrito a comandos RPC");
+    }
+    
+    // Publish initial shared attribute state
+    publishLockState();
+    
+    tbConnected = true;
+  }
+  else
+  {
+    Serial.println("Error de conexión ThingsBoard");
+    tbConnected = false;
+  }
+}
+
+// Publish lock state as shared attribute to ThingBoard
+void publishLockState()
+{
+  if (!tb.connected())
+  {
+    return;
+  }
+
+  // Send shared attribute - API: sendAttributeData(key, value)
+  const char* value = isUnlocked ? "unlocked" : "locked";
+  
+  if (tb.sendAttributeData(LOCK_STATE_ATTR, value))
+  {
+    Serial.print("Shared attribute enviado a ThingBoard: ");
+    Serial.println(value);
+  }
+  else
+  {
+    Serial.println("Error al enviar shared attribute a ThingBoard");
+  }
+}
+
+// Reconnect to WiFi and ThingBoard
+void reconnect()
+{
+  unsigned long currentMillis = millis();
+  
+  // Reconnect to WiFi if needed
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print("Conectando a WiFi...");
+    WiFi.begin(ssid, password);
+    delay(500);
+    return;
+  }
+
+  // Reconnect to ThingBoard if needed
+  if (!tb.connected())
+  {
+    if (currentMillis - lastConnectAttempt >= reconnectInterval)
+    {
+      lastConnectAttempt = currentMillis;
+      connectToThingBoard();
+    }
+  }
 }
 
 // Animación de bienvenida
@@ -569,6 +774,35 @@ void setup()
   pinMode(LOCK_PIN, OUTPUT);
   lockDoor();
 
+  // ============================================
+  // INICIALIZAR WiFi y ThingBoard
+  // ============================================
+  Serial.println("Conectando a WiFi...");
+  WiFi.begin(ssid, password);
+  
+  int wifiAttempts = 0;
+  while (WiFi.status() != WL_CONNECTED && wifiAttempts < 30)
+  {
+    delay(500);
+    Serial.print(".");
+    wifiAttempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("");
+    Serial.print("WiFi conectado. IP: ");
+    Serial.println(WiFi.localIP());
+    
+    // Initial connection to ThingBoard
+    connectToThingBoard();
+  }
+  else
+  {
+    Serial.println("");
+    Serial.println("Error: No se pudo conectar a WiFi");
+  }
+
   // Inicializar I2C para NFC
   Wire.begin(PN532_SDA, PN532_SCL);
 
@@ -645,6 +879,17 @@ void setup()
 
 void loop()
 {
+  // Process ThingsBoard MQTT
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    if (!tb.connected())
+    {
+      reconnect();
+    }
+    // Process MQTT messages
+    mqttClient.loop();
+  }
+  
   lv_timer_handler();
   delay(1);
 }
