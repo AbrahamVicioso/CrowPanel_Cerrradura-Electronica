@@ -98,4 +98,8 @@
 #define TOUCH_MAP_Y1 480
 #define TOUCH_MAP_Y2 0
 
+// Opciones adicionales de calibración
+// Descomenta si necesitas invertir los ejes
+// #define TOUCH_SWAP_XY
+
 #endif // PINS_H

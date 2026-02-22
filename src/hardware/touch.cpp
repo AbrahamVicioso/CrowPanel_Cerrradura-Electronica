@@ -33,8 +33,13 @@ bool touch_read(int* x, int* y)
     
     if (ts.isTouched) {
         // Map coordinates based on configuration
+        #ifdef TOUCH_SWAP_XY
+        *x = map(ts.points[0].y, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width() - 1);
+        *y = map(ts.points[0].x, TOUCH_MAP_Y1, TOUCH_MAP_Y2, 0, lcd.height() - 1);
+        #else
         *x = map(ts.points[0].x, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width() - 1);
         *y = map(ts.points[0].y, TOUCH_MAP_Y1, TOUCH_MAP_Y2, 0, lcd.height() - 1);
+        #endif
         return true;
     }
     

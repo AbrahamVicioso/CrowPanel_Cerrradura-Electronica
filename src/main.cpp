@@ -72,8 +72,15 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
     if (ts.isTouched)
     {
         data->state = LV_INDEV_STATE_PR;
+        
+        // Mapping de coordenadas con soporte para swap
+        #ifdef TOUCH_SWAP_XY
+        data->point.x = map(ts.points[0].y, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width() - 1);
+        data->point.y = map(ts.points[0].x, TOUCH_MAP_Y1, TOUCH_MAP_Y2, 0, lcd.height() - 1);
+        #else
         data->point.x = map(ts.points[0].x, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width() - 1);
         data->point.y = map(ts.points[0].y, TOUCH_MAP_Y1, TOUCH_MAP_Y2, 0, lcd.height() - 1);
+        #endif
     }
     else
     {
