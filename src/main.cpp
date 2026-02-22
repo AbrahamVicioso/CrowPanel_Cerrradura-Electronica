@@ -7,7 +7,8 @@
 #include <Adafruit_PN532.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <string.h>
+#include <ThingsBoard.h>
+#include <Arduino_MQTT_Client.h>
 
 // Pines I2C para PN532 (comparte bus con Touch)
 #define PN532_SDA 19
@@ -27,7 +28,7 @@ const char* password = "Mixael2003";  // Your WiFi password
 // ThingBoard Configuration
 const char* thingsboard_server = "10.0.0.33";  // ThingBoard server IP
 const uint16_t thingsboard_port = 1883;              // MQTT port (non-TLS)
-const char* access_token = "2V13XV7QQz6s641kSpAn";      // ThingBoard device access token
+const char* access_token = "cdjFjdUvQe1WBNJ9qXuG";      // ThingBoard device access token
 
 // Shared attribute name for lock state
 const char* LOCK_STATE_ATTR = "lockState";
@@ -39,7 +40,8 @@ const char* tb_rpc_topic = "v1/devices/me/rpc/request/+";       // RPC requests
 
 // WiFi and MQTT clients
 WiFiClient wifiClient;
-PubSubClient mqttClient(wifiClient);
+Arduino_MQTT_Client mqttClient(wifiClient);
+ThingsBoard tb(mqttClient);
 
 // Connection status
 bool tbConnected = false;
@@ -266,7 +268,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length)
       {
         // Check for state parameter
         bool unlock = true;
-        if (payloadStr.indexOf("\"state\"":false") >= 0 || payloadStr.indexOf("\"state\":false") >= 0)
+        if (payloadStr.indexOf("\"state\":false") >= 0 || payloadStr.indexOf("\"state\":false") >= 0)
         {
           unlock = false;
         }
@@ -310,21 +312,10 @@ void connectToThingBoard()
 
   Serial.print("Conectando a ThingBoard MQTT...");
   
-  // First configure the MQTT client
-  mqttClient.setServer(thingsboard_server, thingsboard_port);
-  mqttClient.setCallback(mqttCallback);
-  
-  // Connect using ThingsBoard (this configures the underlying MQTT client)
+  // Connect to ThingsBoard
   if (tb.connect(thingsboard_server, access_token, thingsboard_port))
   {
     Serial.println("Conectado a ThingBoard!");
-    
-    // Subscribe to RPC topics
-    String rpcTopic = String("v1/devices/me/rpc/request/+");
-    if (mqttClient.subscribe(rpcTopic.c_str()))
-    {
-      Serial.println("Suscrito a comandos RPC");
-    }
     
     // Publish initial shared attribute state
     publishLockState();
@@ -382,6 +373,8 @@ void reconnect()
       lastConnectAttempt = currentMillis;
       connectToThingBoard();
     }
+    // Also call tb.loop() to process ThingsBoard messages
+    tb.loop();
   }
 }
 
@@ -886,8 +879,8 @@ void loop()
     {
       reconnect();
     }
-    // Process MQTT messages
-    mqttClient.loop();
+    // Process ThingsBoard MQTT messages
+    tb.loop();
   }
   
   lv_timer_handler();
