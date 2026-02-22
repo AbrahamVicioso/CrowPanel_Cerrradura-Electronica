@@ -87,7 +87,7 @@ void locked_screen_show(void (*on_callback)(void))
 {
     callback = on_callback;
     display_turn_on();  // Asegurar que el backlight esté encendido
-    lv_scr_load_anim(screen_locked, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+    lv_scr_load_anim(screen_locked, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     
     // Auto-retorno después de 3 segundos
     if (auto_return_timer != nullptr) {

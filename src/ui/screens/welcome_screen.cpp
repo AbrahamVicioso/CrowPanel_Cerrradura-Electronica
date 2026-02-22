@@ -101,7 +101,7 @@ static void animation_callback(lv_timer_t *timer)
         lv_timer_del(timer);
         if (next_screen != nullptr) {
             // Transición elegante con fade
-            lv_scr_load_anim(next_screen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 100, false);
+            lv_scr_load_anim(next_screen, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
         }
     }
 }

@@ -75,7 +75,7 @@ void error_screen_show(void (*on_callback)(void), uint32_t delay_ms)
     display_turn_on();  // Asegurar que el backlight esté encendido
     
     // Transición con efecto
-    lv_scr_load_anim(screen_error, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+    lv_scr_load_anim(screen_error, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     
     // Volver después del delay
     if (delay_ms > 0) {

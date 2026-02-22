@@ -40,7 +40,7 @@
 static uint32_t screenWidth = DISPLAY_WIDTH;
 static uint32_t screenHeight = DISPLAY_HEIGHT;
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t disp_draw_buf[DISPLAY_WIDTH * DISPLAY_HEIGHT / 7];  // Buffer optimizado para animaciones suaves
+static lv_color_t disp_draw_buf[DISPLAY_WIDTH * DISPLAY_HEIGHT / 10];  // Buffer optimizado para menor uso de memoria
 static lv_disp_drv_t disp_drv;
 
 // Timer para NFC
@@ -260,8 +260,8 @@ void setup()
     ts.begin();
     ts.setRotation(TOUCH_ROTATION);
     
-    // Configurar display buffer (tamaño optimizado para animaciones suaves)
-    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, NULL, screenWidth * screenHeight / 7);
+    // Configurar display buffer (tamaño optimizado para menor memoria)
+    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, NULL, screenWidth * screenHeight / 10);
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = screenWidth;
     disp_drv.ver_res = screenHeight;
@@ -296,8 +296,8 @@ void setup()
     // Configurar callback de tap en standby
     standby_screen_set_tap_callback([]() {
         display_turn_on();  // Asegurar que el backlight esté encendido
-        // Usar animación más simple para evitar problemas de renderizado
-        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+        // Sin animación para mejor rendimiento
+        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     });
     
     // Registrar callbacks

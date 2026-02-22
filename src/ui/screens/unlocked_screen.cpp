@@ -86,8 +86,8 @@ void unlocked_screen_show(uint32_t auto_lock_delay_ms, void (*on_lock_callback)(
     lock_callback = on_lock_callback;
     display_turn_on();  // Asegurar que el backlight esté encendido
     
-    // Usar animación de fade para evitar problemas
-    lv_scr_load_anim(screen_unlocked, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+    // Sin animación para mejor rendimiento
+    lv_scr_load_anim(screen_unlocked, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     
     // Configurar timer de auto-bloqueo
     if (auto_lock_delay_ms > 0) {

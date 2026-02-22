@@ -14,7 +14,7 @@ const char* THINGSBOARD_SERVER = "10.0.0.33";
 const uint16_t THINGSBOARD_PORT = 1883;
 
 // Device Access Token
-const char* THINGSBOARD_ACCESS_TOKEN = "cdjFjdUvQe1WBNJ9qXuG";
+const char* THINGSBOARD_ACCESS_TOKEN = "2V13XV7QQz6s641kSpAn";
 
 // Shared attribute name for lock state
 const char* LOCK_STATE_ATTRIBUTE = "lockState";
