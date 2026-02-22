@@ -27,6 +27,14 @@ typedef void (*PinpadErrorCallback)(void);
 lv_obj_t* pinpad_screen_create(void);
 
 /**
+ * @brief Muestra la pantalla del PIN con animación
+ * @param from_screen Pantalla anterior
+ * @param anim_type Tipo de animación
+ * @param duration Duración en ms
+ */
+void pinpad_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uint32_t duration);
+
+/**
  * @brief Registra callback para PIN correcto
  * @param callback Función a llamar
  */

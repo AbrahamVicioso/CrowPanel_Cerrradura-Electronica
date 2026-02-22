@@ -6,6 +6,7 @@
 #include "unlocked_screen.h"
 #include "../theme.h"
 #include "../../config/config.h"
+#include "../../hardware/display.h"
 
 static lv_obj_t* screen_unlocked = nullptr;
 static void (*lock_callback)(void) = nullptr;
@@ -83,9 +84,10 @@ static void auto_lock_timer_callback(lv_timer_t *timer)
 void unlocked_screen_show(uint32_t auto_lock_delay_ms, void (*on_lock_callback)(void))
 {
     lock_callback = on_lock_callback;
+    display_turn_on();  // Asegurar que el backlight esté encendido
     
-    // Transición elegante desde arriba
-    lv_scr_load_anim(screen_unlocked, LV_SCR_LOAD_ANIM_MOVE_TOP, 400, 0, false);
+    // Usar animación de fade para evitar problemas
+    lv_scr_load_anim(screen_unlocked, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
     
     // Configurar timer de auto-bloqueo
     if (auto_lock_delay_ms > 0) {

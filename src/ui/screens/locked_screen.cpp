@@ -5,6 +5,7 @@
 
 #include "locked_screen.h"
 #include "../theme.h"
+#include "../../hardware/display.h"
 
 static lv_obj_t* screen_locked = nullptr;
 static void (*callback)(void) = nullptr;
@@ -85,6 +86,7 @@ static void auto_return_callback(lv_timer_t *timer)
 void locked_screen_show(void (*on_callback)(void))
 {
     callback = on_callback;
+    display_turn_on();  // Asegurar que el backlight esté encendido
     lv_scr_load_anim(screen_locked, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
     
     // Auto-retorno después de 3 segundos

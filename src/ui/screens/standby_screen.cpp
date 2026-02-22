@@ -5,6 +5,7 @@
 
 #include "standby_screen.h"
 #include "../theme.h"
+#include "../../hardware/display.h"
 #include <time.h>
 
 // Objeto de pantalla
@@ -71,6 +72,15 @@ static void screen_touch_event(lv_event_t* e)
 }
 
 /**
+ * @brief Muestra la pantalla de standby con animación
+ */
+void standby_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uint32_t duration)
+{
+    display_turn_on();  // Asegurar que el backlight estéendido
+    lv_scr_load_anim(standby_screen, anim_type, duration, 0, false);
+}
+
+/**
  * @brief Crea la pantalla de standby
  */
 lv_obj_t* standby_screen_create(void)
@@ -130,7 +140,7 @@ lv_obj_t* standby_screen_create(void)
     
     // ==================== TOUCH AREA ====================
     
-    // Área transparente para detectar toc
+    // Área transparente para detectar toque (solo clic)
     btn_area = lv_obj_create(standby_screen);
     lv_obj_set_size(btn_area, 800, 480);
     lv_obj_set_pos(btn_area, 0, 0);
@@ -138,7 +148,7 @@ lv_obj_t* standby_screen_create(void)
     lv_obj_set_style_border_width(btn_area, 0, 0);
     lv_obj_set_style_outline_width(btn_area, 0, 0);
     lv_obj_clear_flag(btn_area, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(btn_area, screen_touch_event, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(btn_area, screen_touch_event, LV_EVENT_CLICKED, NULL);
     
     // Inicializar tiempo inmediatamente
     update_clock();

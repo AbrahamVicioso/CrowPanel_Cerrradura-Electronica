@@ -5,6 +5,7 @@
 
 #include "error_screen.h"
 #include "../theme.h"
+#include "../../hardware/display.h"
 
 static lv_obj_t* screen_error = nullptr;
 static void (*callback)(void) = nullptr;
@@ -71,6 +72,7 @@ static void auto_return_callback(lv_timer_t *timer)
 void error_screen_show(void (*on_callback)(void), uint32_t delay_ms)
 {
     callback = on_callback;
+    display_turn_on();  // Asegurar que el backlight esté encendido
     
     // Transición con efecto
     lv_scr_load_anim(screen_error, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);

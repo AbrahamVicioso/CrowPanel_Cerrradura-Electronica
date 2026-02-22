@@ -5,6 +5,7 @@
 
 #include "welcome_screen.h"
 #include "../theme.h"
+#include "../../hardware/display.h"
 
 // Objeto de pantalla
 static lv_obj_t* welcome_screen = nullptr;
@@ -111,5 +112,6 @@ static void animation_callback(lv_timer_t *timer)
 void welcome_screen_animate_to(lv_obj_t* screen_next)
 {
     next_screen = screen_next;
+    display_turn_on();  // Asegurar que el backlight estéendido
     lv_timer_t *timer = lv_timer_create(animation_callback, 20, NULL);
 }

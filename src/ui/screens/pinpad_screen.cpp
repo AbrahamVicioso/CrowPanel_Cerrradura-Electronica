@@ -6,6 +6,7 @@
 #include "pinpad_screen.h"
 #include "../theme.h"
 #include "../../config/config.h"
+#include "../../hardware/display.h"
 
 // ============================================
 // VARIABLES PRIVADAS
@@ -264,6 +265,15 @@ lv_obj_t* pinpad_screen_create(void)
     lv_obj_center(label_ok);
 
     return screen_pinpad;
+}
+
+/**
+ * @brief Muestra la pantalla del PIN con animación
+ */
+void pinpad_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uint32_t duration)
+{
+    display_turn_on();  // Asegurar que el backlight estéendido
+    lv_scr_load_anim(screen_pinpad, anim_type, duration, 0, false);
 }
 
 void pinpad_set_success_callback(PinpadSuccessCallback callback)

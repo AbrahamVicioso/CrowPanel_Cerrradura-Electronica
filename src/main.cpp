@@ -40,7 +40,7 @@
 static uint32_t screenWidth = DISPLAY_WIDTH;
 static uint32_t screenHeight = DISPLAY_HEIGHT;
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t disp_draw_buf[DISPLAY_WIDTH * DISPLAY_HEIGHT / 15];
+static lv_color_t disp_draw_buf[DISPLAY_WIDTH * DISPLAY_HEIGHT / 7];  // Buffer optimizado para animaciones suaves
 static lv_disp_drv_t disp_drv;
 
 // Timer para NFC
@@ -106,6 +106,7 @@ void on_pin_success(void)
 {
     lock_unlock();
     thingsboard_publish_lock_state(lock_get_state());
+    display_turn_on();  // Asegurar que el backlight esté encendido
     
     unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, []() {
         lock_lock();
@@ -114,6 +115,7 @@ void on_pin_success(void)
         // Volver a pantalla de standby
         locked_screen_show([]() {
             pinpad_reset();
+            display_turn_on();
             lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
         });
     });
@@ -125,8 +127,10 @@ void on_pin_success(void)
 void on_pin_error(void)
 {
     // Mostrar pantalla de error y volver a standby
+    display_turn_on();  // Asegurar que el backlight esté encendido
     error_screen_show([]() {
         pinpad_reset();
+        display_turn_on();
         lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
     }, 1500);
 }
@@ -143,6 +147,7 @@ void nfc_check_timer_cb(lv_timer_t *timer)
         // Cualquier tarjeta NFC detectada - desbloquear
         lock_unlock();
         thingsboard_publish_lock_state(lock_get_state());
+        display_turn_on();  // Asegurar que el backlight esté encendido
         
         unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, []() {
             lock_lock();
@@ -151,6 +156,7 @@ void nfc_check_timer_cb(lv_timer_t *timer)
             // Volver a pantalla de standby
             locked_screen_show([]() {
                 pinpad_reset();
+                display_turn_on();
                 lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
             });
         });
@@ -254,8 +260,8 @@ void setup()
     ts.begin();
     ts.setRotation(TOUCH_ROTATION);
     
-    // Configurar display buffer
-    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, NULL, screenWidth * screenHeight / 15);
+    // Configurar display buffer (tamaño optimizado para animaciones suaves)
+    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, NULL, screenWidth * screenHeight / 7);
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = screenWidth;
     disp_drv.ver_res = screenHeight;
@@ -289,7 +295,9 @@ void setup()
     
     // Configurar callback de tap en standby
     standby_screen_set_tap_callback([]() {
-        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+        display_turn_on();  // Asegurar que el backlight esté encendido
+        // Usar animación más simple para evitar problemas de renderizado
+        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
     });
     
     // Registrar callbacks
