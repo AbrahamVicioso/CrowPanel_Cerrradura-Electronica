@@ -262,11 +262,11 @@ void setup()
     
     // Configurar timezone y sincronizar hora (solo si hay WiFi)
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("Configurando zona horaria...");
-        setenv("TZ", "AST4", 1);
+        Serial.println("Configurando zona horaria (Republica Dominicana)...");
+        setenv("TZ", "America/Santo_Domingo", 1);
         tzset();
-        // Usar servidores NTP de Caribe/América
-        configTime(0, 0, "pool.ntp.org", "time.google.com", "clock.sidn.nl");
+        // Usar servidores NTP de Caribe/América Latina
+        configTime(-4 * 3600, 0, "pool.ntp.org", "time.google.com");
         
         // Sincronizar hora (esperar hasta 5 segundos)
         Serial.println("Sincronizando hora...");
