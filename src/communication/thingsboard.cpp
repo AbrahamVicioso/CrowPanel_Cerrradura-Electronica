@@ -101,7 +101,7 @@ bool thingsboard_connect(void)
     // Check WiFi status
     if (WiFi.status() != WL_CONNECTED)
     {
-        Serial.println("WiFi no conectado");
+        Serial.println("ThingsBoard: WiFi no conectado");
         return false;
     }
 
@@ -110,7 +110,10 @@ bool thingsboard_connect(void)
         return true;
     }
 
-    Serial.print("Conectando a ThingsBoard MQTT...");
+    Serial.print("Conectando a ThingsBoard ");
+    Serial.print(THINGSBOARD_SERVER);
+    Serial.print(":");
+    Serial.println(THINGSBOARD_PORT);
     
     // Connect to ThingsBoard
     if (tb.connect(THINGSBOARD_SERVER, THINGSBOARD_ACCESS_TOKEN, THINGSBOARD_PORT))
@@ -125,7 +128,7 @@ bool thingsboard_connect(void)
     }
     else
     {
-        Serial.println("Error de conexión ThingsBoard");
+        Serial.println("Error de conexión ThingsBoard - intentar mas tarde");
         tbConnected = false;
         return false;
     }

@@ -173,6 +173,10 @@ void nfc_check_timer_cb(lv_timer_t *timer)
 void connect_wifi(void)
 {
     Serial.println("Conectando a WiFi...");
+    Serial.print("SSID: ");
+    Serial.println(WIFI_SSID);
+    
+    WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     
     int attempts = 0;
@@ -186,13 +190,40 @@ void connect_wifi(void)
     if (WiFi.status() == WL_CONNECTED)
     {
         Serial.println("");
-        Serial.print("WiFi conectado. IP: ");
+        Serial.print("WiFi conectado! IP: ");
         Serial.println(WiFi.localIP());
+        Serial.print("Gateway: ");
+        Serial.println(WiFi.gatewayIP());
+        Serial.print("DNS: ");
+        Serial.println(WiFi.dnsIP());
     }
     else
     {
         Serial.println("");
-        Serial.println("Error: No se pudo conectar a WiFi");
+        Serial.print("Error WiFi. Estado: ");
+        Serial.println(WiFi.status());
+        // Posibles errores:
+        // 0 = WL_IDLE_STATUS
+        // 1 = WL_NO_SSID_AVAIL
+        // 2 = WL_SCAN_COMPLETED
+        // 3 = WL_CONNECTED
+        // 4 = WL_CONNECT_FAILED
+        // 5 = WL_CONNECTION_LOST
+        // 6 = WL_DISCONNECTED
+        switch(WiFi.status()) {
+            case WL_NO_SSID_AVAIL:
+                Serial.println("Red WiFi no encontrada!");
+                break;
+            case WL_CONNECT_FAILED:
+                Serial.println("Contraseña incorrecta!");
+                break;
+            case WL_CONNECTION_LOST:
+                Serial.println("Conexion perdida!");
+                break;
+            case WL_DISCONNECTED:
+                Serial.println("Desconectado!");
+                break;
+        }
     }
 }
 
