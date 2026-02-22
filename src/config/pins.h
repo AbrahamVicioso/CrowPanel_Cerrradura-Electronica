@@ -90,16 +90,17 @@
 #define TOUCH_SCL     I2C_SCL
 #define TOUCH_INT     -1  // Sin interrupt
 #define TOUCH_RST     -1  // Sin reset
-#define TOUCH_ROTATION 0  // ROTATION_NORMAL
+#define TOUCH_ROTATION 1  // Rotación 90° para corregir mapeo
 
 // Mapping de coordenadas touch
-#define TOUCH_MAP_X1 800
-#define TOUCH_MAP_X2 0
-#define TOUCH_MAP_Y1 480
-#define TOUCH_MAP_Y2 0
+// Pantalla: 800x480 (ancho x alto)
+#define TOUCH_MAP_X1 0
+#define TOUCH_MAP_X2 800
+#define TOUCH_MAP_Y1 0
+#define TOUCH_MAP_Y2 480
 
-// Opciones adicionales de calibración
-// Descomenta si necesitas invertir los ejes
+// Intercambiar ejes X e Y del touch
+// Deshabilitado porque ya no es necesario
 // #define TOUCH_SWAP_XY
 
 #endif // PINS_H

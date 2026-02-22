@@ -69,7 +69,7 @@ LGFX::LGFX(void)
         cfg.panel_width   = DISPLAY_WIDTH;
         cfg.panel_height  = DISPLAY_HEIGHT;
         cfg.offset_x = 0;
-        cfg.offset_y = 0;
+        cfg.offset_y = 40;  // Ajuste para centrar verticalmente
         _panel_instance.config(cfg);
     }
     _panel_instance.setBus(&_bus_instance);
@@ -85,6 +85,8 @@ LGFX lcd;
 void display_init(void)
 {
     lcd.begin();
+    // Rotar display 90 grados para corregir orientación
+    // lcd.setRotation(1);  // 1 = 90° clockwise
     lcd.fillScreen(TFT_BLACK);
     delay(100);
     
