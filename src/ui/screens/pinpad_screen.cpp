@@ -15,7 +15,6 @@ static lv_obj_t* screen_pinpad = nullptr;
 static lv_obj_t* label_pin_display = nullptr;
 static lv_obj_t* label_status = nullptr;
 static lv_obj_t* label_nfc_status = nullptr;
-static lv_obj_t* status_container = nullptr;
 
 static String pinCode = "";
 static String correctPin = DEFAULT_PIN;
@@ -39,6 +38,12 @@ static void btn_num_event_cb(lv_event_t *e)
         if (pinCode.length() < PIN_LENGTH)
         {
             pinCode += num;
+            
+            // Ocultar textos de ayuda cuando hay input
+            if (pinCode.length() == 1) {
+                lv_obj_add_flag(label_status, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
+            }
             
             // Actualizar display con puntos
             String display = "";
@@ -99,6 +104,9 @@ static void btn_clear_event_cb(lv_event_t *e)
         lv_label_set_text(label_pin_display, "");
         lv_label_set_text(label_status, "Ingrese PIN");
         lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+        // Mostrar textos de ayuda
+        lv_obj_clear_flag(label_status, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -110,40 +118,44 @@ lv_obj_t* pinpad_screen_create(void)
 {
     screen_pinpad = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(screen_pinpad, COLOR_PRIMARY, 0);
+    lv_obj_clear_flag(screen_pinpad, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ==================== HEADER ====================
+    // ==================== HEADER BACKGROUND ====================
     
-    // Barra de título
-    lv_obj_t *header = lv_obj_create(screen_pinpad);
-    lv_obj_set_size(header, 800, 60);
-    lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_color(header, COLOR_SECONDARY, 0);
-    lv_obj_set_style_border_width(header, 0, 0);
-    lv_obj_set_style_radius(header, 0, 0);
+    // Barra de título como label (sin scroll)
+    lv_obj_t *header_bg = lv_obj_create(screen_pinpad);
+    lv_obj_set_size(header_bg, 800, 60);
+    lv_obj_set_pos(header_bg, 0, 0);
+    lv_obj_set_style_bg_color(header_bg, COLOR_SECONDARY, 0);
+    lv_obj_set_style_border_width(header_bg, 0, 0);
+    lv_obj_set_style_radius(header_bg, 0, 0);
+    lv_obj_clear_flag(header_bg, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Icono de candado en header
-    lv_obj_t *lock_icon = lv_label_create(header);
+    // Icono de candado en header (como label, no scroll)
+    lv_obj_t *lock_icon = lv_label_create(header_bg);
     lv_label_set_text(lock_icon, LV_SYMBOL_LOOP);
     lv_obj_set_style_text_font(lock_icon, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lock_icon, COLOR_ACCENT, 0);
     lv_obj_set_pos(lock_icon, 30, 18);
 
-    // Título del header
-    lv_obj_t *label_title = lv_label_create(header);
+    // Título del header (como label fijo)
+    lv_obj_t *label_title = lv_label_create(header_bg);
     lv_label_set_text(label_title, "CONTROL DE ACCESO");
-    lv_obj_set_style_text_font(label_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(label_title, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(label_title, COLOR_TEXT, 0);
     lv_obj_set_pos(label_title, 70, 20);
 
     // ==================== STATUS PANEL ====================
     
     // Contenedor de estado
-    status_container = lv_obj_create(screen_pinpad);
-    lv_obj_set_size(status_container, 400, 100);
-    lv_obj_set_pos(status_container, 200, 80);
+    lv_obj_t *status_container = lv_obj_create(screen_pinpad);
+    lv_obj_set_size(status_container, 400, 110);
+    lv_obj_set_pos(status_container, 200, 75);
     lv_obj_set_style_bg_color(status_container, COLOR_SECONDARY, 0);
     lv_obj_set_style_radius(status_container, 15, 0);
     lv_obj_set_style_border_width(status_container, 0, 0);
+    lv_obj_set_style_pad_all(status_container, 10, 0);
+    lv_obj_clear_flag(status_container, LV_OBJ_FLAG_SCROLLABLE);
 
     // Label de estado
     label_status = lv_label_create(status_container);
@@ -152,7 +164,7 @@ lv_obj_t* pinpad_screen_create(void)
     lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
     lv_obj_align(label_status, LV_ALIGN_TOP_MID, 0, 15);
 
-    // Display del PIN (asteriscos)
+    // Display del PIN
     label_pin_display = lv_label_create(status_container);
     lv_label_set_text(label_pin_display, "");
     lv_obj_set_style_text_font(label_pin_display, &lv_font_montserrat_32, 0);
@@ -172,9 +184,9 @@ lv_obj_t* pinpad_screen_create(void)
 
     int spacing = 12;
     int btn_width = 80;
-    int btn_height = 50;
+    int btn_height = 55;
     int start_x = 260;
-    int start_y = 200;
+    int start_y = 195;
 
     // Crear botones 1-9
     for (int i = 0; i < 9; i++)
@@ -211,7 +223,7 @@ lv_obj_t* pinpad_screen_create(void)
 
     lv_obj_t *label_clear = lv_label_create(btn_clear);
     lv_label_set_text(label_clear, "C");
-    lv_obj_set_style_text_font(label_clear, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(label_clear, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(label_clear, COLOR_TEXT, 0);
     lv_obj_center(label_clear);
 
@@ -235,7 +247,7 @@ lv_obj_t* pinpad_screen_create(void)
 
     lv_obj_add_event_cb(btn_0, btn_num_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // Botón OK (decorativo)
+    // Botón OK
     lv_obj_t *btn_ok = lv_btn_create(screen_pinpad);
     lv_obj_set_size(btn_ok, btn_width, btn_height);
     lv_obj_set_pos(btn_ok, start_x + 2 * (btn_width + spacing), start_y + 3 * (btn_height + spacing));
@@ -247,7 +259,7 @@ lv_obj_t* pinpad_screen_create(void)
 
     lv_obj_t *label_ok = lv_label_create(btn_ok);
     lv_label_set_text(label_ok, "OK");
-    lv_obj_set_style_text_font(label_ok, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(label_ok, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(label_ok, COLOR_TEXT, 0);
     lv_obj_center(label_ok);
 
@@ -273,6 +285,13 @@ void pinpad_reset(void)
     if (label_status != nullptr) {
         lv_label_set_text(label_status, "Ingrese PIN");
         lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+    }
+    // Mostrar textos de ayuda
+    if (label_nfc_status != nullptr) {
+        lv_obj_clear_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (label_status != nullptr) {
+        lv_obj_clear_flag(label_status, LV_OBJ_FLAG_HIDDEN);
     }
 }
 

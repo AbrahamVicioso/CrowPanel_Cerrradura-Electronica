@@ -27,6 +27,7 @@
 
 #include "ui/theme.h"
 #include "ui/screens/welcome_screen.h"
+#include "ui/screens/standby_screen.h"
 #include "ui/screens/pinpad_screen.h"
 #include "ui/screens/unlocked_screen.h"
 #include "ui/screens/locked_screen.h"
@@ -47,6 +48,7 @@ static lv_timer_t *nfc_timer = nullptr;
 
 // Pantallas
 static lv_obj_t* screen_welcome = nullptr;
+static lv_obj_t* screen_standby = nullptr;
 static lv_obj_t* screen_pinpad = nullptr;
 static lv_obj_t* screen_unlocked = nullptr;
 static lv_obj_t* screen_locked = nullptr;
@@ -109,10 +111,10 @@ void on_pin_success(void)
         lock_lock();
         thingsboard_publish_lock_state(lock_get_state());
         pinpad_reset();
-        // Mostrar pantalla de bloqueo antes de volver al PIN
+        // Volver a pantalla de standby
         locked_screen_show([]() {
             pinpad_reset();
-            lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+            lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
         });
     });
 }
@@ -122,10 +124,10 @@ void on_pin_success(void)
  */
 void on_pin_error(void)
 {
-    // Mostrar pantalla de error y volver al PIN
+    // Mostrar pantalla de error y volver a standby
     error_screen_show([]() {
         pinpad_reset();
-        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+        lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
     }, 1500);
 }
 
@@ -146,10 +148,10 @@ void nfc_check_timer_cb(lv_timer_t *timer)
             lock_lock();
             thingsboard_publish_lock_state(lock_get_state());
             pinpad_reset();
-            // Mostrar pantalla de bloqueo antes de volver al PIN
+            // Volver a pantalla de standby
             locked_screen_show([]() {
                 pinpad_reset();
-                lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+                lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
             });
         });
     }
@@ -211,6 +213,31 @@ void setup()
     Serial.println("[3/6] Conectando a red...");
     connect_wifi();
     
+    // Configurar timezone y sincronizar hora (solo si hay WiFi)
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("Configurando zona horaria...");
+        setenv("TZ", "AST4", 1);
+        tzset();
+        configTime(0, 0, "pool.ntp.org", "time.google.com");
+        
+        // Sincronizar hora (esperar hasta 5 segundos)
+        Serial.println("Sincronizando hora...");
+        struct tm timeinfo;
+        int retry = 0;
+        while (getLocalTime(&timeinfo) == false && retry < 10) {
+            delay(500);
+            Serial.print(".");
+            retry++;
+        }
+        if (getLocalTime(&timeinfo)) {
+            Serial.println("\nHora sincronizada: " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min));
+        } else {
+            Serial.println("\nNo se pudo sincronizar la hora");
+        }
+    } else {
+        Serial.println("WiFi no conectado - usando hora del sistema");
+    }
+    
     // 4. Inicializar ThingsBoard
     Serial.println("[4/6] Inicializando ThingsBoard...");
     if (WiFi.status() == WL_CONNECTED) {
@@ -254,17 +281,23 @@ void setup()
     
     // Crear pantallas
     screen_welcome = welcome_screen_create();
+    screen_standby = standby_screen_create();
     screen_pinpad = pinpad_screen_create();
     screen_unlocked = unlocked_screen_create();
     screen_locked = locked_screen_create();
     screen_error = error_screen_create();
     
+    // Configurar callback de tap en standby
+    standby_screen_set_tap_callback([]() {
+        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+    });
+    
     // Registrar callbacks
     pinpad_set_success_callback(on_pin_success);
     pinpad_set_error_callback(on_pin_error);
     
-    // Iniciar animación de bienvenida
-    welcome_screen_animate_to(screen_pinpad);
+    // Iniciar animación de bienvenida -> standby
+    welcome_screen_animate_to(screen_standby);
     
     // Inicializar NFC
     nfc_init();
