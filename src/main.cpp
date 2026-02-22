@@ -219,12 +219,23 @@ void setup()
     Serial.println("[3/6] Conectando a red...");
     connect_wifi();
     
+    // Debug: Mostrar estado WiFi
+    Serial.print("Estado WiFi: ");
+    Serial.println(WiFi.status());
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.print("IP: ");
+        Serial.println(WiFi.localIP());
+        Serial.print("Gateway: ");
+        Serial.println(WiFi.gatewayIP());
+    }
+    
     // Configurar timezone y sincronizar hora (solo si hay WiFi)
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("Configurando zona horaria...");
         setenv("TZ", "AST4", 1);
         tzset();
-        configTime(0, 0, "pool.ntp.org", "time.google.com");
+        // Usar servidores NTP de Caribe/América
+        configTime(0, 0, "pool.ntp.org", "time.google.com", "clock.sidn.nl");
         
         // Sincronizar hora (esperar hasta 5 segundos)
         Serial.println("Sincronizando hora...");
