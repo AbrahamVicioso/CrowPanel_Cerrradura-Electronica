@@ -8,7 +8,7 @@
 
 // Objeto de pantalla
 static lv_obj_t* welcome_screen = nullptr;
-static lv_obj_t* arc_animation = nullptr;
+static lv_obj_t* loading_spinner = nullptr;
 static lv_obj_t* next_screen = nullptr;
 
 // Forward declaration
@@ -22,33 +22,67 @@ lv_obj_t* welcome_screen_create(void)
     welcome_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(welcome_screen, COLOR_PRIMARY, 0);
 
-    // Logo/Título
-    lv_obj_t *label_welcome = lv_label_create(welcome_screen);
-    lv_label_set_text(label_welcome, "SISTEMA DE ACCESO");
-    lv_obj_set_style_text_font(label_welcome, &lv_font_montserrat_48, 0);
-    lv_obj_set_style_text_color(label_welcome, COLOR_TEXT, 0);
-    lv_obj_align(label_welcome, LV_ALIGN_CENTER, 0, -60);
+    // ==================== LOGO SECTION ====================
+    
+    // Icono de candado grande (círculo decorativo)
+    lv_obj_t* circle_bg = lv_obj_create(welcome_screen);
+    lv_obj_set_size(circle_bg, 140, 140);
+    lv_obj_set_pos(circle_bg, 330, 100);
+    lv_obj_set_style_bg_color(circle_bg, lv_color_hex(0xe94560), 0);
+    lv_obj_set_style_border_width(circle_bg, 0, 0);
+    lv_obj_set_style_radius(circle_bg, 70, 0);
+    lv_obj_set_style_shadow_width(circle_bg, 25, 0);
+    lv_obj_set_style_shadow_opa(circle_bg, LV_OPA_50, 0);
 
-    // Subtítulo
+    // Icono de candado usando símbolos LVGL
+    lv_obj_t *lock_icon = lv_label_create(circle_bg);
+    lv_label_set_text(lock_icon, LV_SYMBOL_LOOP);
+    lv_obj_set_style_text_font(lock_icon, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(lock_icon, COLOR_TEXT, 0);
+    lv_obj_center(lock_icon);
+
+    // Título principal
+    lv_obj_t *label_title = lv_label_create(welcome_screen);
+    lv_label_set_text(label_title, "SISTEMA DE");
+    lv_obj_set_style_text_font(label_title, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(label_title, COLOR_TEXT_SECONDARY, 0);
+    lv_obj_set_pos(label_title, 0, 260);
+    lv_obj_set_width(label_title, 800);
+
+    // Subtítulo (nombre del sistema)
     lv_obj_t *label_subtitle = lv_label_create(welcome_screen);
-    lv_label_set_text(label_subtitle, "Control de Cerradura Electronica");
-    lv_obj_set_style_text_font(label_subtitle, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(label_subtitle, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_align(label_subtitle, LV_ALIGN_CENTER, 0, 0);
+    lv_label_set_text(label_subtitle, "CERRADURA ELECTRONICA");
+    lv_obj_set_style_text_font(label_subtitle, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(label_subtitle, COLOR_TEXT, 0);
+    lv_obj_set_style_text_letter_space(label_subtitle, 2, 0);
+    lv_obj_set_pos(label_subtitle, 0, 295);
+    lv_obj_set_width(label_subtitle, 800);
 
-    // Círculo de carga animado
-    arc_animation = lv_arc_create(welcome_screen);
-    lv_obj_set_size(arc_animation, 100, 100);
-    lv_arc_set_rotation(arc_animation, 270);
-    lv_arc_set_bg_angles(arc_animation, 0, 360);
-    lv_arc_set_angles(arc_animation, 0, 0);
-    lv_obj_set_style_arc_color(arc_animation, COLOR_ACCENT, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc_animation, COLOR_SUCCESS, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(arc_animation, 8, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc_animation, 8, LV_PART_INDICATOR);
-    lv_obj_remove_style(arc_animation, NULL, LV_PART_KNOB);
-    lv_obj_align(arc_animation, LV_ALIGN_CENTER, 0, 80);
-    lv_obj_clear_flag(arc_animation, LV_OBJ_FLAG_CLICKABLE);
+    // Línea decorativa
+    lv_obj_t* line = lv_obj_create(welcome_screen);
+    lv_obj_set_size(line, 150, 3);
+    lv_obj_set_pos(line, 325, 345);
+    lv_obj_set_style_bg_color(line, COLOR_ACCENT, 0);
+    lv_obj_set_style_radius(line, 2, 0);
+
+    // ==================== LOADING SECTION ====================
+    
+    // Spinner de carga
+    loading_spinner = lv_spinner_create(welcome_screen, 1000, 30);
+    lv_obj_set_size(loading_spinner, 40, 40);
+    lv_obj_set_pos(loading_spinner, 380, 370);
+    lv_obj_set_style_arc_color(loading_spinner, COLOR_TEXT_MUTED, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(loading_spinner, COLOR_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(loading_spinner, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(loading_spinner, 4, LV_PART_INDICATOR);
+
+    // Texto de carga
+    lv_obj_t *label_loading = lv_label_create(welcome_screen);
+    lv_label_set_text(label_loading, "Inicializando...");
+    lv_obj_set_style_text_font(label_loading, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label_loading, COLOR_TEXT_MUTED, 0);
+    lv_obj_set_pos(label_loading, 0, 420);
+    lv_obj_set_width(label_loading, 800);
 
     return welcome_screen;
 }
@@ -58,14 +92,14 @@ lv_obj_t* welcome_screen_create(void)
  */
 static void animation_callback(lv_timer_t *timer)
 {
-    static int angle = 0;
-    lv_arc_set_value(arc_animation, angle);
-    angle += 5;
+    static int counter = 0;
+    counter++;
 
-    if (angle >= 360)
+    if (counter >= 50)  // Wait about 1 second (50 * 20ms)
     {
         lv_timer_del(timer);
         if (next_screen != nullptr) {
+            // Transición elegante con fade
             lv_scr_load_anim(next_screen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 100, false);
         }
     }

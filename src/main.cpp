@@ -29,6 +29,8 @@
 #include "ui/screens/welcome_screen.h"
 #include "ui/screens/pinpad_screen.h"
 #include "ui/screens/unlocked_screen.h"
+#include "ui/screens/locked_screen.h"
+#include "ui/screens/error_screen.h"
 
 // ============================================
 // VARIABLES GLOBALES DE LVGL
@@ -47,6 +49,8 @@ static lv_timer_t *nfc_timer = nullptr;
 static lv_obj_t* screen_welcome = nullptr;
 static lv_obj_t* screen_pinpad = nullptr;
 static lv_obj_t* screen_unlocked = nullptr;
+static lv_obj_t* screen_locked = nullptr;
+static lv_obj_t* screen_error = nullptr;
 
 // ============================================
 // CALLBACKS DE LVGL
@@ -105,7 +109,11 @@ void on_pin_success(void)
         lock_lock();
         thingsboard_publish_lock_state(lock_get_state());
         pinpad_reset();
-        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+        // Mostrar pantalla de bloqueo antes de volver al PIN
+        locked_screen_show([]() {
+            pinpad_reset();
+            lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+        });
     });
 }
 
@@ -114,7 +122,11 @@ void on_pin_success(void)
  */
 void on_pin_error(void)
 {
-    // El manejo ya se hace en pinpad_screen.cpp
+    // Mostrar pantalla de error y volver al PIN
+    error_screen_show([]() {
+        pinpad_reset();
+        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+    }, 1500);
 }
 
 /**
@@ -126,7 +138,7 @@ void nfc_check_timer_cb(lv_timer_t *timer)
     
     if (nfc_read_tag(&tag))
     {
-        // Cualquier tarjeta NFC detected - desbloquear
+        // Cualquier tarjeta NFC detectada - desbloquear
         lock_unlock();
         thingsboard_publish_lock_state(lock_get_state());
         
@@ -134,7 +146,11 @@ void nfc_check_timer_cb(lv_timer_t *timer)
             lock_lock();
             thingsboard_publish_lock_state(lock_get_state());
             pinpad_reset();
-            lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+            // Mostrar pantalla de bloqueo antes de volver al PIN
+            locked_screen_show([]() {
+                pinpad_reset();
+                lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+            });
         });
     }
 }
@@ -240,6 +256,8 @@ void setup()
     screen_welcome = welcome_screen_create();
     screen_pinpad = pinpad_screen_create();
     screen_unlocked = unlocked_screen_create();
+    screen_locked = locked_screen_create();
+    screen_error = error_screen_create();
     
     // Registrar callbacks
     pinpad_set_success_callback(on_pin_success);
