@@ -23,6 +23,16 @@ static String correctPin = DEFAULT_PIN;
 static PinpadSuccessCallback success_callback = nullptr;
 static PinpadErrorCallback error_callback = nullptr;
 
+// Timer de inactividad (15 segundos para volver a standby)
+static lv_timer_t* inactivity_timer = nullptr;
+static void (*inactivity_callback)(void) = nullptr;
+
+// Timeout de inactividad en ms
+#define PINPAD_INACTIVITY_TIMEOUT_MS 15000
+
+// Forward declaration
+static void reset_inactivity_timer(void);
+
 // ============================================
 // FUNCIONES CALLBACK
 // ============================================
@@ -39,6 +49,9 @@ static void btn_num_event_cb(lv_event_t *e)
         if (pinCode.length() < PIN_LENGTH)
         {
             pinCode += num;
+            
+            // Reiniciar timer de inactividad
+            reset_inactivity_timer();
             
             // Ocultar textos de ayuda cuando hay input
             if (pinCode.length() == 1) {
@@ -108,7 +121,42 @@ static void btn_clear_event_cb(lv_event_t *e)
         // Mostrar textos de ayuda
         lv_obj_clear_flag(label_status, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
+        
+        // Reiniciar timer de inactividad
+        reset_inactivity_timer();
     }
+}
+
+// Timer de inactividad - vuelve a standby después de 15 segundos
+static void inactivity_timer_callback(lv_timer_t* timer)
+{
+    lv_timer_del(timer);
+    inactivity_timer = nullptr;
+    
+    // Reset PIN y ejecutar callback de inactividad
+    pinCode = "";
+    lv_label_set_text(label_pin_display, "");
+    
+    if (inactivity_callback != nullptr) {
+        inactivity_callback();
+    }
+}
+
+// Reinicia el timer de inactividad
+static void reset_inactivity_timer(void)
+{
+    // Eliminar timer anterior si existe
+    if (inactivity_timer != nullptr) {
+        lv_timer_del(inactivity_timer);
+    }
+    
+    // Crear nuevo timer de 15 segundos
+    inactivity_timer = lv_timer_create(
+        inactivity_timer_callback, 
+        PINPAD_INACTIVITY_TIMEOUT_MS, 
+        NULL
+    );
+    lv_timer_set_repeat_count(inactivity_timer, 1);
 }
 
 // ============================================
@@ -274,6 +322,17 @@ void pinpad_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uin
 {
     display_turn_on();  // Asegurar que el backlight estéendido
     lv_scr_load_anim(screen_pinpad, anim_type, duration, 0, false);
+    
+    // Iniciar timer de inactividad (15 segundos)
+    reset_inactivity_timer();
+}
+
+/**
+ * @brief Establece el callback de inactividad (cuando pasan 15 segundos sin actividad)
+ */
+void pinpad_set_inactivity_callback(void (*callback)(void))
+{
+    inactivity_callback = callback;
 }
 
 void pinpad_set_success_callback(PinpadSuccessCallback callback)

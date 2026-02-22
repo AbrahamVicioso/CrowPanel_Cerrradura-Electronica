@@ -307,13 +307,19 @@ void setup()
     // Configurar callback de tap en standby
     standby_screen_set_tap_callback([]() {
         display_turn_on();  // Asegurar que el backlight esté encendido
-        // Sin animación para mejor rendimiento
-        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+        // Usar pinpad_screen_show para iniciar el timer de inactividad
+        pinpad_screen_show(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0);
     });
     
     // Registrar callbacks
     pinpad_set_success_callback(on_pin_success);
     pinpad_set_error_callback(on_pin_error);
+    
+    // Callback de inactividad (volver a standby después de 15 seg sin actividad)
+    pinpad_set_inactivity_callback([]() {
+        display_turn_on();
+        lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    });
     
     // Iniciar animación de bienvenida -> standby
     welcome_screen_animate_to(screen_standby);

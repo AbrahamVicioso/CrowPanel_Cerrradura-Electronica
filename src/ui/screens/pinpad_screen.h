@@ -35,6 +35,12 @@ lv_obj_t* pinpad_screen_create(void);
 void pinpad_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uint32_t duration);
 
 /**
+ * @brief Establece el callback de inactividad (vuelve a standby después de 15 seg)
+ * @param callback Función a llamar cuando pase el tiempo
+ */
+void pinpad_set_inactivity_callback(void (*callback)(void));
+
+/**
  * @brief Registra callback para PIN correcto
  * @param callback Función a llamar
  */
