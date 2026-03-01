@@ -88,7 +88,7 @@ void display_init(void)
     // Rotar display 90 grados para corregir orientación
     // lcd.setRotation(1);  // 1 = 90° clockwise
     lcd.fillScreen(TFT_BLACK);
-    delay(100);
+    delay(50);  // Reducido de 100ms
     
     Serial.println("Display LCD inicializado correctamente");
 }

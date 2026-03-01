@@ -21,7 +21,7 @@ lv_obj_t* locked_screen_create(void)
 
     // ==================== LOCK ICON ====================
     
-    // Círculo de bloqueo
+    // Círculo de bloqueo (sin sombra para mejor rendimiento)
     lv_obj_t *circle_bg = lv_obj_create(screen_locked);
     lv_obj_set_size(circle_bg, 140, 140);
     lv_obj_set_pos(circle_bg, 330, 120);
@@ -29,8 +29,7 @@ lv_obj_t* locked_screen_create(void)
     lv_obj_set_style_border_width(circle_bg, 3, 0);
     lv_obj_set_style_border_color(circle_bg, COLOR_ACCENT, 0);
     lv_obj_set_style_radius(circle_bg, 70, 0);
-    lv_obj_set_style_shadow_width(circle_bg, 20, 0);
-    lv_obj_set_style_shadow_opa(circle_bg, LV_OPA_30, 0);
+    // Shadow removido - era costoso en CPU
 
     // Candado cerrado
     lv_obj_t *lock_icon = lv_label_create(circle_bg);

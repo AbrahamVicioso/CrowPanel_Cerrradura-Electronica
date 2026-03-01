@@ -30,55 +30,77 @@ static unsigned long lastConnectAttempt = 0;
  */
 static void mqttCallback(char* topic, byte* payload, unsigned int length)
 {
-    Serial.print("Mensaje recibido en topic: ");
-    Serial.println(topic);
+    // Serial.print("Mensaje recibido en topic: ");
+    // Serial.println(topic);
     
     // Parse RPC topic: v1/devices/me/rpc/request/{id}
-    String topicStr = String(topic);
+    // Usar comparación más eficiente
+    if (length < 5) return;  // Early exit para mensajes muy cortos
     
-    if (topicStr.indexOf("rpc/request/") >= 0)
+    // Quick check for rpc/request/ - evitar String allocation si no es necesario
+    bool isRpcRequest = false;
+    for (unsigned int i = 0; i < length - 12 && i < 50; i++) {
+        if (topic[i] == 'r' && topic[i+1] == 'p' && topic[i+2] == 'c' && 
+            topic[i+3] == '/' && topic[i+4] == 'r' && topic[i+5] == 'e' &&
+            topic[i+6] == 'q' && topic[i+7] == 'u' && topic[i+8] == 'e' &&
+            topic[i+9] == 's' && topic[i+10] == 't' && topic[i+11] == '/') {
+            isRpcRequest = true;
+            break;
+        }
+    }
+    
+    if (!isRpcRequest) return;
+    
+    // Parse JSON payload
+    char message[128];  // Buffer en stack en lugar de heap
+    unsigned int copyLen = (length < 127) ? length : 127;
+    memcpy(message, payload, copyLen);
+    message[copyLen] = '\0';
+    
+    // Serial.print("Payload: ");
+    // Serial.println(message);
+    
+    // Buscar method en JSON - búsqueda simple
+    char* methodPos = strstr(message, "\"method\"");
+    if (!methodPos) methodPos = strstr(message, "\"methodName\"");
+    
+    if (methodPos != nullptr)
     {
-        // Parse JSON payload
-        char message[length + 1];
-        memcpy(message, payload, length);
-        message[length] = '\0';
-        
-        Serial.print("Payload: ");
-        Serial.println(message);
-        
-        // Try to find method in JSON
-        String payloadStr = String(message);
-        int methodStart = payloadStr.indexOf("\"method\"");
-        if (methodStart < 0) methodStart = payloadStr.indexOf("\"methodName\"");
-        
-        if (methodStart >= 0)
-        {
-            // Find the method name
-            int nameStart = payloadStr.indexOf(":", methodStart) + 2;
-            int nameEnd = payloadStr.indexOf("\"", nameStart);
-            String methodName = payloadStr.substring(nameStart, nameEnd);
+        // Encontrar nombre del método
+        char* nameStart = strchr(methodPos, ':');
+        if (nameStart != nullptr) {
+            nameStart += 2;  // Saltar ": y espacio
+            char* nameEnd = strchr(nameStart, '"');
             
-            Serial.print("Método: ");
-            Serial.println(methodName);
-            
-            // Handle commands
-            if (methodName == "unlockDoor" || methodName == "unlock" || methodName == "setLockState")
-            {
-                // Check for state parameter
-                bool unlock = true;
-                if (payloadStr.indexOf("\"state\":false") >= 0) {
-                    unlock = false;
-                }
+            if (nameEnd != nullptr && (nameEnd - nameStart) < 20) {
+                char methodName[21];
+                int nameLen = nameEnd - nameStart;
+                strncpy(methodName, nameStart, nameLen);
+                methodName[nameLen] = '\0';
                 
-                if (unlock) {
-                    lock_unlock();
-                } else {
+                // Handle commands
+                if (strcmp(methodName, "unlockDoor") == 0 || 
+                    strcmp(methodName, "unlock") == 0 || 
+                    strcmp(methodName, "setLockState") == 0)
+                {
+                    // Check for state parameter
+                    bool unlock = true;
+                    if (strstr(message, "\"state\":false") != nullptr || 
+                        strstr(message, "\"state\": false") != nullptr) {
+                        unlock = false;
+                    }
+                    
+                    if (unlock) {
+                        lock_unlock();
+                    } else {
+                        lock_lock();
+                    }
+                }
+                else if (strcmp(methodName, "lockDoor") == 0 || 
+                         strcmp(methodName, "lock") == 0)
+                {
                     lock_lock();
                 }
-            }
-            else if (methodName == "lockDoor" || methodName == "lock")
-            {
-                lock_lock();
             }
         }
     }
@@ -144,14 +166,19 @@ void thingsboard_disconnect(void)
 
 void thingsboard_loop(void)
 {
+    // Solo procesar si hay WiFi conectado
     if (WiFi.status() == WL_CONNECTED)
     {
+        // Intentar reconectar si es necesario
         if (!tb.connected())
         {
             thingsboard_reconnect();
         }
-        // Process ThingsBoard MQTT messages
-        tb.loop();
+        
+        // Procesar mensajes MQTT - solo si está conectado
+        if (tb.connected()) {
+            tb.loop();
+        }
     }
 }
 
@@ -190,9 +217,9 @@ void thingsboard_reconnect(void)
     // Reconnect to WiFi if needed
     if (WiFi.status() != WL_CONNECTED)
     {
-        Serial.print("Conectando a WiFi...");
+        // Intentar reconectar WiFi silenciosamente (sin muchos Serial)
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        delay(500);
+        delay(100);  // Reducido de 500ms
         return;
     }
     

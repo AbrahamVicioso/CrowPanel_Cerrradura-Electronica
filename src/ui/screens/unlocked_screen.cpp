@@ -10,6 +10,7 @@
 
 static lv_obj_t* screen_unlocked = nullptr;
 static void (*lock_callback)(void) = nullptr;
+static lv_timer_t* auto_lock_timer = nullptr;
 
 lv_obj_t* unlocked_screen_create(void)
 {
@@ -18,15 +19,14 @@ lv_obj_t* unlocked_screen_create(void)
 
     // ==================== SUCCESS ICON ====================
     
-    // Círculo grande de éxito
+    // Círculo grande de éxito (sin sombra para mejor rendimiento)
     lv_obj_t *circle_bg = lv_obj_create(screen_unlocked);
     lv_obj_set_size(circle_bg, 150, 150);
     lv_obj_set_pos(circle_bg, 325, 80);
     lv_obj_set_style_bg_color(circle_bg, COLOR_SUCCESS, 0);
     lv_obj_set_style_border_width(circle_bg, 0, 0);
     lv_obj_set_style_radius(circle_bg, 75, 0);
-    lv_obj_set_style_shadow_width(circle_bg, 30, 0);
-    lv_obj_set_style_shadow_opa(circle_bg, LV_OPA_50, 0);
+    // Shadow removido - era costoso en CPU
 
     // Checkmark icon
     lv_obj_t *icon_check = lv_label_create(circle_bg);
@@ -91,11 +91,15 @@ void unlocked_screen_show(uint32_t auto_lock_delay_ms, void (*on_lock_callback)(
     
     // Configurar timer de auto-bloqueo
     if (auto_lock_delay_ms > 0) {
-        lv_timer_t *lock_timer = lv_timer_create(
+        // Eliminar timer anterior si existe
+        if (auto_lock_timer != nullptr) {
+            lv_timer_del(auto_lock_timer);
+        }
+        auto_lock_timer = lv_timer_create(
             auto_lock_timer_callback, 
             auto_lock_delay_ms, 
             NULL
         );
-        lv_timer_set_repeat_count(lock_timer, 1);
+        lv_timer_set_repeat_count(auto_lock_timer, 1);
     }
 }

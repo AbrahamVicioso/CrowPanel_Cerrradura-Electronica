@@ -274,7 +274,7 @@ lv_obj_t* standby_screen_create(void)
     // ── Inicializar y arrancar timers ────────────────────
     update_clock();
     clock_timer = lv_timer_create(clock_timer_cb,   60000, NULL);  // cada minuto
-    colon_timer = lv_timer_create(colon_blink_cb,     500, NULL);  // blink ½s
+    colon_timer = lv_timer_create(colon_blink_cb,    1000, NULL);  // blink cada 1s (reducido de 500ms)
 
     return standby_screen;
 }

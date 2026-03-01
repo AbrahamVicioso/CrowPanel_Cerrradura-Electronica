@@ -92,7 +92,7 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
     {
         data->state = LV_INDEV_STATE_REL;
     }
-    delay(5);
+    // Removed delay(5) - it was blocking and unnecessary
 }
 
 // ============================================
@@ -369,7 +369,7 @@ void setup()
 
 void loop()
 {
-    // Procesar ThingsBoard
+    // Procesar ThingsBoard solo si hay conexión
     if (WiFi.status() == WL_CONNECTED)
     {
         thingsboard_loop();
@@ -377,5 +377,8 @@ void loop()
     
     // Procesar LVGL
     lv_timer_handler();
-    delay(1);
+    
+    // Delay inteligente - usar delay(1) solo cuando sea necesario
+    // Esto permite que otras tareas del sistema también se ejecuten
+    delay(5);  // 5ms es suficiente para LVGL con la configuración optimizada
 }
