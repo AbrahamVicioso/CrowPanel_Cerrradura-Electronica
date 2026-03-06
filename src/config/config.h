@@ -25,7 +25,7 @@
 // Tiempos de espera
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define THINGSBOARD_RECONNECT_INTERVAL_MS 5000
-#define NFC_CHECK_INTERVAL_MS 2000  /* Increased from 1000ms to reduce CPU load */
+#define NFC_CHECK_INTERVAL_MS 5000  /* Aumentado a 5s para reducir uso de CPU */
 
 // Dimensiones de pantalla
 #define SCREEN_WIDTH 800

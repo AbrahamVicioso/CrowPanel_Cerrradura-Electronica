@@ -9,6 +9,7 @@
 
 static lv_obj_t* screen_error = nullptr;
 static void (*callback)(void) = nullptr;
+static lv_timer_t* error_return_timer = nullptr;
 
 /**
  * @brief Crea la pantalla de error
@@ -20,7 +21,7 @@ lv_obj_t* error_screen_create(void)
 
     // ==================== ERROR ICON ====================
     
-    // Círculo de error
+    // Círculo de error (sin sombra para mejor rendimiento)
     lv_obj_t *circle_bg = lv_obj_create(screen_error);
     lv_obj_set_size(circle_bg, 140, 140);
     lv_obj_set_pos(circle_bg, 330, 100);
@@ -28,8 +29,7 @@ lv_obj_t* error_screen_create(void)
     lv_obj_set_style_border_width(circle_bg, 3, 0);
     lv_obj_set_style_border_color(circle_bg, COLOR_ERROR, 0);
     lv_obj_set_style_radius(circle_bg, 70, 0);
-    lv_obj_set_style_shadow_width(circle_bg, 25, 0);
-    lv_obj_set_style_shadow_opa(circle_bg, LV_OPA_40, 0);
+    // Shadow removido - era costoso en CPU
 
     // X icon
     lv_obj_t *error_icon = lv_label_create(circle_bg);
@@ -63,9 +63,12 @@ lv_obj_t* error_screen_create(void)
 static void auto_return_callback(lv_timer_t *timer)
 {
     lv_timer_del(timer);
-    
+    error_return_timer = nullptr;  // Resetear puntero
+
     if (callback != nullptr) {
-        callback();
+        void (*cb)(void) = callback;  // Copiar callback
+        callback = nullptr;            // Resetear para evitar doble ejecución
+        cb();                          // Ejecutar callback
     }
 }
 
@@ -77,9 +80,12 @@ void error_screen_show(void (*on_callback)(void), uint32_t delay_ms)
     // Transición con efecto
     lv_scr_load_anim(screen_error, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     
-    // Volver después del delay
+    // Volver después del delay - guardar timer para evitar memory leak
     if (delay_ms > 0) {
-        lv_timer_t *timer = lv_timer_create(auto_return_callback, delay_ms, NULL);
-        lv_timer_set_repeat_count(timer, 1);
+        if (error_return_timer != nullptr) {
+            lv_timer_del(error_return_timer);
+        }
+        error_return_timer = lv_timer_create(auto_return_callback, delay_ms, NULL);
+        lv_timer_set_repeat_count(error_return_timer, 1);
     }
 }

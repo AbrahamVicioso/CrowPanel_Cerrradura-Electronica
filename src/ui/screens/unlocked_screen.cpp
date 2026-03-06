@@ -75,9 +75,12 @@ lv_obj_t* unlocked_screen_create(void)
 static void auto_lock_timer_callback(lv_timer_t *timer)
 {
     lv_timer_del(timer);
-    
+    auto_lock_timer = nullptr;  // CRITICAL: Resetear puntero después de eliminar
+
     if (lock_callback != nullptr) {
-        lock_callback();
+        void (*cb)(void) = lock_callback;  // Copiar callback
+        lock_callback = nullptr;            // Resetear callback para evitar doble ejecución
+        cb();                              // Ejecutar callback
     }
 }
 

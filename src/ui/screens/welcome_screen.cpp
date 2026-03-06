@@ -9,7 +9,6 @@
 
 // Objeto de pantalla
 static lv_obj_t* welcome_screen = nullptr;
-static lv_obj_t* loading_spinner = nullptr;
 static lv_obj_t* next_screen = nullptr;
 
 // Forward declaration
@@ -25,15 +24,14 @@ lv_obj_t* welcome_screen_create(void)
 
     // ==================== LOGO SECTION ====================
     
-    // Icono de candado grande (círculo decorativo)
+    // Icono de candado grande (círculo decorativo sin sombra)
     lv_obj_t* circle_bg = lv_obj_create(welcome_screen);
     lv_obj_set_size(circle_bg, 140, 140);
     lv_obj_set_pos(circle_bg, 330, 100);
     lv_obj_set_style_bg_color(circle_bg, lv_color_hex(0xe94560), 0);
     lv_obj_set_style_border_width(circle_bg, 0, 0);
     lv_obj_set_style_radius(circle_bg, 70, 0);
-    lv_obj_set_style_shadow_width(circle_bg, 25, 0);
-    lv_obj_set_style_shadow_opa(circle_bg, LV_OPA_50, 0);
+    // Shadow removido - era costoso en CPU
 
     // Icono de candado usando símbolos LVGL
     lv_obj_t *lock_icon = lv_label_create(circle_bg);
@@ -53,7 +51,7 @@ lv_obj_t* welcome_screen_create(void)
     // Subtítulo (nombre del sistema)
     lv_obj_t *label_subtitle = lv_label_create(welcome_screen);
     lv_label_set_text(label_subtitle, "CERRADURA ELECTRONICA");
-    lv_obj_set_style_text_font(label_subtitle, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(label_subtitle, &lv_font_montserrat_24, 0);  // Cambiado de 28 a 24 (optimización)
     lv_obj_set_style_text_color(label_subtitle, COLOR_TEXT, 0);
     lv_obj_set_style_text_letter_space(label_subtitle, 2, 0);
     lv_obj_set_pos(label_subtitle, 0, 295);
@@ -68,16 +66,7 @@ lv_obj_t* welcome_screen_create(void)
 
     // ==================== LOADING SECTION ====================
     
-    // Spinner de carga
-    loading_spinner = lv_spinner_create(welcome_screen, 1000, 30);
-    lv_obj_set_size(loading_spinner, 40, 40);
-    lv_obj_set_pos(loading_spinner, 380, 370);
-    lv_obj_set_style_arc_color(loading_spinner, COLOR_TEXT_MUTED, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(loading_spinner, COLOR_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(loading_spinner, 4, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(loading_spinner, 4, LV_PART_INDICATOR);
-
-    // Texto de carga
+    // Loading indicator simple (reemplazado spinner costoso)
     lv_obj_t *label_loading = lv_label_create(welcome_screen);
     lv_label_set_text(label_loading, "Inicializando...");
     lv_obj_set_style_text_font(label_loading, &lv_font_montserrat_14, 0);

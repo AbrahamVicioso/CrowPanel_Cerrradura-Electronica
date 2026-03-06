@@ -40,11 +40,19 @@
 static uint32_t screenWidth = DISPLAY_WIDTH;
 static uint32_t screenHeight = DISPLAY_HEIGHT;
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t disp_draw_buf[DISPLAY_WIDTH * DISPLAY_HEIGHT / 10];  // Buffer optimizado para menor uso de memoria
+
+// Buffers usando PSRAM para evitar fragmentación y mejor performance
+// Doble buffer en PSRAM: buffer1 para renderizado activo, buffer2 para DMA
+static lv_color_t* disp_draw_buf1;  // Ubicado en PSRAM
+static lv_color_t* disp_draw_buf2;  // Ubicado en PSRAM
 static lv_disp_drv_t disp_drv;
 
 // Timer para NFC
 static lv_timer_t *nfc_timer = nullptr;
+
+// Flags para evitar múltiples activaciones
+static volatile bool is_screen_active = false;  // Flag para evitar pantallas concurrentes
+static volatile bool is_unlocking = false;       // Flag para evitar desbloqueos simultáneos
 
 // Pantallas
 static lv_obj_t* screen_welcome = nullptr;
@@ -96,29 +104,60 @@ void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
 }
 
 // ============================================
-// CALLBACKS DE EVENTOS
+// CALLBACKS DE EVENTOS (SIN LAMBDAS ANIDADAS)
 // ============================================
+
+/**
+ * @brief Callback final: volver a standby desde locked
+ */
+void on_return_to_standby(void)
+{
+    pinpad_reset();
+    display_turn_on();
+    lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    is_screen_active = false;  // Liberar el flag al final del flujo
+}
+
+/**
+ * @brief Callback después de unlock: mostrar locked y volver
+ */
+void on_lock_after_unlock(void)
+{
+    lock_lock();
+    thingsboard_publish_lock_state(lock_get_state());
+    pinpad_reset();
+    locked_screen_show(on_return_to_standby);
+}
 
 /**
  * @brief Callback cuando el PIN es correcto
  */
 void on_pin_success(void)
 {
+    // Evitar activación si ya está activo
+    if (is_screen_active || is_unlocking) return;
+    is_screen_active = true;
+    is_unlocking = true;
+
     lock_unlock();
     thingsboard_publish_lock_state(lock_get_state());
-    display_turn_on();  // Asegurar que el backlight esté encendido
-    
-    unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, []() {
-        lock_lock();
-        thingsboard_publish_lock_state(lock_get_state());
-        pinpad_reset();
-        // Volver a pantalla de standby
-        locked_screen_show([]() {
-            pinpad_reset();
-            display_turn_on();
-            lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
-        });
-    });
+    display_turn_on();
+
+    unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, on_lock_after_unlock);
+
+    // Resetear flag de unlocking después de un momento
+    is_unlocking = false;
+}
+
+/**
+ * @brief Callback para volver a standby después de error
+ */
+void on_error_return_to_standby(void)
+{
+    pinpad_reset();
+    display_turn_on();
+    lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    is_screen_active = false;
 }
 
 /**
@@ -126,13 +165,12 @@ void on_pin_success(void)
  */
 void on_pin_error(void)
 {
-    // Mostrar pantalla de error y volver a standby
-    display_turn_on();  // Asegurar que el backlight esté encendido
-    error_screen_show([]() {
-        pinpad_reset();
-        display_turn_on();
-        lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
-    }, 1500);
+    // Evitar activación si ya está activo
+    if (is_screen_active) return;
+    is_screen_active = true;
+
+    display_turn_on();
+    error_screen_show(on_error_return_to_standby, 1500);
 }
 
 /**
@@ -140,26 +178,24 @@ void on_pin_error(void)
  */
 void nfc_check_timer_cb(lv_timer_t *timer)
 {
+    // Evitar activación si ya está activo
+    if (is_screen_active || is_unlocking) return;
+
     NfcTag tag;
-    
+
     if (nfc_read_tag(&tag))
     {
-        // Cualquier tarjeta NFC detectada - desbloquear
+        is_screen_active = true;
+        is_unlocking = true;
+
         lock_unlock();
         thingsboard_publish_lock_state(lock_get_state());
-        display_turn_on();  // Asegurar que el backlight esté encendido
-        
-        unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, []() {
-            lock_lock();
-            thingsboard_publish_lock_state(lock_get_state());
-            pinpad_reset();
-            // Volver a pantalla de standby
-            locked_screen_show([]() {
-                pinpad_reset();
-                display_turn_on();
-                lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
-            });
-        });
+        display_turn_on();
+
+        unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, on_lock_after_unlock);
+
+        // Resetear flag de unlocking después de un momento
+        is_unlocking = false;
     }
 }
 
@@ -296,20 +332,43 @@ void setup()
     // 5. Inicializar LVGL
     Serial.println("[5/6] Inicializando LVGL...");
     lv_init();
-    
+
     // Inicializar touch
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
     ts.begin();
     ts.setRotation(TOUCH_ROTATION);
-    
-    // Configurar display buffer (tamaño optimizado para menor memoria)
-    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf, NULL, screenWidth * screenHeight / 10);
+
+    // Alocar buffers en PSRAM para mejor rendimiento y evitar fragmentación
+    // Buffer size: 1/5 de pantalla para balance entre memoria y velocidad
+    uint32_t buf_size = screenWidth * screenHeight / 5;
+    Serial.print("Alocando buffers en PSRAM: ");
+    Serial.print(buf_size * sizeof(lv_color_t) * 2);
+    Serial.println(" bytes");
+
+    disp_draw_buf1 = (lv_color_t*)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    disp_draw_buf2 = (lv_color_t*)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+
+    if (!disp_draw_buf1 || !disp_draw_buf2) {
+        Serial.println("ERROR: No se pudo alocar buffers en PSRAM!");
+        Serial.println("Intentando usar memoria interna...");
+        // Fallback a memoria interna con buffer más pequeño
+        if (!disp_draw_buf1) disp_draw_buf1 = (lv_color_t*)malloc(buf_size / 4 * sizeof(lv_color_t));
+        if (!disp_draw_buf2) disp_draw_buf2 = (lv_color_t*)malloc(buf_size / 4 * sizeof(lv_color_t));
+        buf_size = buf_size / 4;
+    }
+
+    // Configurar doble buffer para rendering sin bloqueos
+    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf1, disp_draw_buf2, buf_size);
+
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = screenWidth;
     disp_drv.ver_res = screenHeight;
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
+    disp_drv.full_refresh = 0;  // Permitir partial refresh para mejor performance
     lv_disp_drv_register(&disp_drv);
+
+    Serial.println("Buffers LVGL configurados correctamente");
     
     // Configurar input device
     static lv_indev_drv_t indev_drv;
@@ -337,7 +396,7 @@ void setup()
     
     // Configurar callback de tap en standby
     standby_screen_set_tap_callback([]() {
-        display_turn_on();  // Asegurar que el backlight esté encendido
+        display_turn_on();  // Asegurar que el backlight estéendido
         // Usar pinpad_screen_show para iniciar el timer de inactividad
         pinpad_screen_show(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0);
     });
@@ -369,16 +428,38 @@ void setup()
 
 void loop()
 {
-    // Procesar ThingsBoard solo si hay conexión
-    if (WiFi.status() == WL_CONNECTED)
+    // CRITICAL: Verificar memoria disponible para evitar crash
+    static uint32_t last_mem_check = 0;
+    if (millis() - last_mem_check > 5000) {  // Check cada 5 segundos
+        uint32_t free_heap = ESP.getFreeHeap();
+        if (free_heap < 10000) {  // Menos de 10KB libre = PELIGRO
+            Serial.print("WARNING: Low memory! Free heap: ");
+            Serial.println(free_heap);
+            // Resetear flags para intentar recuperar
+            is_screen_active = false;
+            is_unlocking = false;
+        }
+        last_mem_check = millis();
+    }
+
+    // OPTIMIZACIÓN: Procesar LVGL con máxima prioridad
+    // lv_timer_handler() retorna tiempo hasta el próximo timer
+    uint32_t time_till_next = lv_timer_handler();
+
+    // Procesar ThingsBoard solo si hay conexión (menos frecuente que LVGL)
+    static uint32_t last_tb_check = 0;
+    if (WiFi.status() == WL_CONNECTED && (millis() - last_tb_check > 100))
     {
         thingsboard_loop();
+        last_tb_check = millis();
     }
-    
-    // Procesar LVGL
-    lv_timer_handler();
-    
-    // Delay inteligente - usar delay(1) solo cuando sea necesario
-    // Esto permite que otras tareas del sistema también se ejecuten
-    delay(5);  // 5ms es suficiente para LVGL con la configuración optimizada
+
+    // Delay adaptativo basado en el próximo evento LVGL
+    // Esto minimiza latencia mientras permite que otras tareas funcionen
+    if (time_till_next > 5) {
+        delay(2);  // Delay mínimo para no saturar el CPU
+    }
+
+    // Watchdog - resetear si hay un watchdog habilitado
+    yield();  // Dar tiempo a otras tareas del sistema
 }

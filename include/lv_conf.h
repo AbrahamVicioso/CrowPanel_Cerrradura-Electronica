@@ -46,7 +46,7 @@
  *=========================*/
 
 /*1: use custom malloc/free, 0: use the built-in `lv_mem_alloc()` and `lv_mem_free()`*/
-#define LV_MEM_CUSTOM 0
+#define LV_MEM_CUSTOM 1
 #if LV_MEM_CUSTOM == 0
     /*Size of the memory available for `lv_mem_alloc()` in bytes (>= 2kB)*/
     #define LV_MEM_SIZE (32U * 1024U)          /*[bytes] - Reduced from 48KB to 32KB*/
@@ -61,7 +61,7 @@
 
 #else       /*LV_MEM_CUSTOM*/
     #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>   /*Header for the dynamic memory function*/
-    #define LV_MEM_CUSTOM_ALLOC   malloc
+    #define LV_MEM_CUSTOM_ALLOC   malloc       /*Usar malloc de ESP32 que gestiona PSRAM automáticamente*/
     #define LV_MEM_CUSTOM_FREE    free
     #define LV_MEM_CUSTOM_REALLOC realloc
 #endif     /*LV_MEM_CUSTOM*/
@@ -71,17 +71,17 @@
 #define LV_MEM_BUF_MAX_NUM 2  /* Reduced from 16 - enough for single buffer */
 
 /*Use the standard `memcpy` and `memset` instead of LVGL's own functions. (Might or might not be faster).*/
-#define LV_MEMCPY_MEMSET_STD 0
+#define LV_MEMCPY_MEMSET_STD 1  /* Usar versiones optimizadas del sistema */
 
 /*====================
    HAL SETTINGS
  *====================*/
 
 /*Default display refresh period. LVG will redraw changed areas with this period time*/
-#define LV_DISP_DEF_REFR_PERIOD 30      /*[ms] - Increased from 10ms to reduce CPU*/
+#define LV_DISP_DEF_REFR_PERIOD 16      /*[ms] - 60 FPS para animaciones suaves (~16.67ms)*/
 
 /*Input device read period in milliseconds*/
-#define LV_INDEV_DEF_READ_PERIOD 50     /*[ms] - Increased from 30ms to reduce CPU*/
+#define LV_INDEV_DEF_READ_PERIOD 30     /*[ms] - Balance entre respuesta y CPU*/
 
 /*Use a custom tick source that tells the elapsed time in milliseconds.
  *It removes the need to manually update the tick with `lv_tick_inc()`)*/
@@ -326,26 +326,26 @@
 /*Montserrat fonts with ASCII range and some symbols using bpp = 4
  *https://fonts.google.com/specimen/Montserrat*/
 #define LV_FONT_MONTSERRAT_8  0
-#define LV_FONT_MONTSERRAT_10 1
-#define LV_FONT_MONTSERRAT_12 1
-#define LV_FONT_MONTSERRAT_14 1
-#define LV_FONT_MONTSERRAT_16 1
-#define LV_FONT_MONTSERRAT_18 1
+#define LV_FONT_MONTSERRAT_10 1  /* Usado en standby hint */
+#define LV_FONT_MONTSERRAT_12 1  /* Usado en standby y pinpad */
+#define LV_FONT_MONTSERRAT_14 1  /* Font default */
+#define LV_FONT_MONTSERRAT_16 1  /* Usado en pinpad */
+#define LV_FONT_MONTSERRAT_18 1  /* Usado en pinpad y screens */
 #define LV_FONT_MONTSERRAT_20 0
-#define LV_FONT_MONTSERRAT_22 1
-#define LV_FONT_MONTSERRAT_24 1
+#define LV_FONT_MONTSERRAT_22 0  /* Disabled - reduce memory */
+#define LV_FONT_MONTSERRAT_24 1  /* Usado en pinpad y screens */
 #define LV_FONT_MONTSERRAT_26 0
-#define LV_FONT_MONTSERRAT_28 1
+#define LV_FONT_MONTSERRAT_28 0  /* Disabled - reduce memory */
 #define LV_FONT_MONTSERRAT_30 0
-#define LV_FONT_MONTSERRAT_32 1
+#define LV_FONT_MONTSERRAT_32 1  /* Usado en pinpad display */
 #define LV_FONT_MONTSERRAT_34 0
-#define LV_FONT_MONTSERRAT_36 1
+#define LV_FONT_MONTSERRAT_36 0  /* Disabled - reduce memory */
 #define LV_FONT_MONTSERRAT_38 0
-#define LV_FONT_MONTSERRAT_40 1
-#define LV_FONT_MONTSERRAT_42 1
+#define LV_FONT_MONTSERRAT_40 0  /* Disabled - reduce memory */
+#define LV_FONT_MONTSERRAT_42 0  /* Disabled - reduce memory */
 #define LV_FONT_MONTSERRAT_44 0
 #define LV_FONT_MONTSERRAT_46 0
-#define LV_FONT_MONTSERRAT_48 1
+#define LV_FONT_MONTSERRAT_48 1  /* Usado en standby reloj */
 
 /*Demonstrate special features*/
 #define LV_FONT_MONTSERRAT_12_SUBPX      0
@@ -491,21 +491,21 @@
 
 #define LV_USE_MENU       0  /* Disabled - not used */
 
-#define LV_USE_METER      1
+#define LV_USE_METER      0  /* Disabled - reduce memory */
 
-#define LV_USE_MSGBOX     1
+#define LV_USE_MSGBOX     0  /* Disabled - reduce memory */
 
-#define LV_USE_SPINBOX    1
+#define LV_USE_SPINBOX    0  /* Disabled - reduce memory */
 
-#define LV_USE_SPINNER    1
+#define LV_USE_SPINNER    0  /* Disabled - reduce memory */
 
-#define LV_USE_TABVIEW    1
+#define LV_USE_TABVIEW    0  /* Disabled - reduce memory */
 
-#define LV_USE_TILEVIEW   1
+#define LV_USE_TILEVIEW   0  /* Disabled - reduce memory */
 
-#define LV_USE_WIN        1
+#define LV_USE_WIN        0  /* Disabled - reduce memory */
 
-#define LV_USE_SPAN       1
+#define LV_USE_SPAN       0  /* Disabled - reduce memory */
 #if LV_USE_SPAN
     /*A line text can contain maximum num of span descriptor */
     #define LV_SPAN_SNIPPET_STACK_SIZE 64
@@ -654,16 +654,16 @@
  ====================*/
 
 /*Show some widget. It might be required to increase `LV_MEM_SIZE` */
-#define LV_USE_DEMO_WIDGETS        1
+#define LV_USE_DEMO_WIDGETS        0  /* Disabled - save memory and flash */
 #if LV_USE_DEMO_WIDGETS
-#define LV_DEMO_WIDGETS_SLIDESHOW  1
+#define LV_DEMO_WIDGETS_SLIDESHOW  0
 #endif
 
 /*Demonstrate the usage of encoder and keyboard*/
-#define LV_USE_DEMO_KEYPAD_AND_ENCODER     1
+#define LV_USE_DEMO_KEYPAD_AND_ENCODER     0  /* Disabled - save memory */
 
 /*Benchmark your system*/
-#define LV_USE_DEMO_BENCHMARK   1
+#define LV_USE_DEMO_BENCHMARK   0  /* Disabled - save memory */
 
 /*Stress test for LVGL*/
 #define LV_USE_DEMO_STRESS      0

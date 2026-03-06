@@ -30,12 +30,57 @@ static void (*inactivity_callback)(void) = nullptr;
 // Timeout de inactividad en ms
 #define PINPAD_INACTIVITY_TIMEOUT_MS 15000
 
-// Forward declaration
+// Forward declarations
 static void reset_inactivity_timer(void);
+static void validate_pin_callback(lv_timer_t *t);
+static void restore_status_callback(lv_timer_t *rt);
 
 // ============================================
 // FUNCIONES CALLBACK
 // ============================================
+
+/**
+ * @brief Callback para validar el PIN (reemplaza lambda)
+ */
+static void validate_pin_callback(lv_timer_t *t)
+{
+    if (pinCode == correctPin)
+    {
+        lv_label_set_text(label_status, "ACCESO OK");
+        lv_obj_set_style_text_color(label_status, COLOR_SUCCESS, 0);
+
+        if (success_callback) {
+            success_callback();
+        }
+    }
+    else
+    {
+        lv_label_set_text(label_status, "PIN INCORRECTO");
+        lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
+
+        if (error_callback) {
+            error_callback();
+        }
+
+        pinCode = "";
+        lv_label_set_text(label_pin_display, "");
+
+        // Restaurar mensaje después de 2 segundos
+        lv_timer_t *restore_timer = lv_timer_create(restore_status_callback, 2000, NULL);
+        lv_timer_set_repeat_count(restore_timer, 1);
+    }
+    lv_timer_del(t);
+}
+
+/**
+ * @brief Callback para restaurar el mensaje de estado (reemplaza lambda)
+ */
+static void restore_status_callback(lv_timer_t *rt)
+{
+    lv_label_set_text(label_status, "Ingrese PIN");
+    lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+    lv_timer_del(rt);
+}
 
 static void btn_num_event_cb(lv_event_t *e)
 {
@@ -70,38 +115,8 @@ static void btn_num_event_cb(lv_event_t *e)
             // Validar automáticamente cuando llegue a PIN_LENGTH dígitos
             if (pinCode.length() == PIN_LENGTH)
             {
-                lv_timer_t *timer = lv_timer_create([](lv_timer_t *t) {
-                    if (pinCode == correctPin)
-                    {
-                        lv_label_set_text(label_status, "ACCESO OK");
-                        lv_obj_set_style_text_color(label_status, COLOR_SUCCESS, 0);
-                        
-                        if (success_callback) {
-                            success_callback();
-                        }
-                    }
-                    else
-                    {
-                        lv_label_set_text(label_status, "PIN INCORRECTO");
-                        lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
-                        
-                        if (error_callback) {
-                            error_callback();
-                        }
-                        
-                        pinCode = "";
-                        lv_label_set_text(label_pin_display, "");
-
-                        // Restaurar mensaje después de 2 segundos
-                        lv_timer_t *restore_timer = lv_timer_create([](lv_timer_t *rt) {
-                            lv_label_set_text(label_status, "Ingrese PIN");
-                            lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-                            lv_timer_del(rt);
-                        }, 2000, NULL);
-                        lv_timer_set_repeat_count(restore_timer, 1);
-                    }
-                    lv_timer_del(t);
-                }, 300, NULL);
+                // Usar función en vez de lambda para evitar memory leak
+                lv_timer_t *timer = lv_timer_create(validate_pin_callback, 300, NULL);
                 lv_timer_set_repeat_count(timer, 1);
             }
         }
@@ -131,14 +146,16 @@ static void btn_clear_event_cb(lv_event_t *e)
 static void inactivity_timer_callback(lv_timer_t* timer)
 {
     lv_timer_del(timer);
-    inactivity_timer = nullptr;
-    
+    inactivity_timer = nullptr;  // Resetear puntero
+
     // Reset PIN y ejecutar callback de inactividad
     pinCode = "";
-    lv_label_set_text(label_pin_display, "");
-    
+    if (label_pin_display) lv_label_set_text(label_pin_display, "");
+
     if (inactivity_callback != nullptr) {
-        inactivity_callback();
+        void (*cb)(void) = inactivity_callback;  // Copiar callback
+        inactivity_callback = nullptr;            // Resetear para evitar doble ejecución
+        cb();                                     // Ejecutar callback
     }
 }
 
@@ -348,6 +365,13 @@ void pinpad_set_error_callback(PinpadErrorCallback callback)
 void pinpad_reset(void)
 {
     pinCode = "";
+
+    // CRITICAL: Limpiar timer de inactividad para evitar callbacks fantasma
+    if (inactivity_timer != nullptr) {
+        lv_timer_del(inactivity_timer);
+        inactivity_timer = nullptr;
+    }
+
     if (label_pin_display != nullptr) {
         lv_label_set_text(label_pin_display, "");
     }

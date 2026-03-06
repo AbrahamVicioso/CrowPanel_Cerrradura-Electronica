@@ -136,10 +136,9 @@ static void screen_touch_cb(lv_event_t* e)
 lv_obj_t* standby_screen_create(void)
 {
     // ── Fondo ──────────────────────────────────────
+    // OPTIMIZACIÓN: Sin degradado para reducir carga de CPU/GPU
     standby_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(standby_screen, lv_color_hex(C_BG_DEEP), 0);
-    lv_obj_set_style_bg_grad_color(standby_screen, lv_color_hex(C_BG_MID), 0);
-    lv_obj_set_style_bg_grad_dir(standby_screen, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_bg_opa(standby_screen, LV_OPA_COVER, 0);
     lv_obj_clear_flag(standby_screen, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -159,15 +158,13 @@ lv_obj_t* standby_screen_create(void)
 
     // ── Barra superior: puntos de estado + label WiFi ──
     // Puntos izquierda (estado activo = azul)
+    // OPTIMIZACIÓN: Sin sombras para reducir carga de renderizado
     lv_obj_t* dot_on = lv_obj_create(standby_screen);
     lv_obj_set_size(dot_on, 6, 6);
     lv_obj_set_pos(dot_on, 40, 24);
     lv_obj_set_style_bg_color(dot_on, lv_color_hex(C_STATUS_ON), 0);
     lv_obj_set_style_radius(dot_on, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(dot_on, 0, 0);
-    lv_obj_set_style_shadow_color(dot_on, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_shadow_spread(dot_on, 4, 0);
-    lv_obj_set_style_shadow_opa(dot_on, LV_OPA_50, 0);
     lv_obj_clear_flag(dot_on, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
     for (int i = 1; i <= 2; i++) {
@@ -226,15 +223,13 @@ lv_obj_t* standby_screen_create(void)
     lv_obj_align(div_right, LV_ALIGN_CENTER, 75, 26);
 
     // Rombo central
+    // OPTIMIZACIÓN: Sin sombra para reducir carga de renderizado
     lv_obj_t* diamond = lv_obj_create(standby_screen);
     lv_obj_set_size(diamond, 7, 7);
     lv_obj_align(diamond, LV_ALIGN_CENTER, 0, 23);
     lv_obj_set_style_bg_color(diamond, lv_color_hex(C_ACCENT), 0);
     lv_obj_set_style_radius(diamond, 1, 0);
     lv_obj_set_style_border_width(diamond, 0, 0);
-    lv_obj_set_style_shadow_color(diamond, lv_color_hex(C_ACCENT), 0);
-    lv_obj_set_style_shadow_spread(diamond, 5, 0);
-    lv_obj_set_style_shadow_opa(diamond, LV_OPA_50, 0);
     lv_obj_set_style_transform_angle(diamond, 450, 0);
     lv_obj_clear_flag(diamond, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
