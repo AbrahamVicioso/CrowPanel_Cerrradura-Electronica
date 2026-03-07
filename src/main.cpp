@@ -472,7 +472,7 @@ void setup()
     Serial.println("ThingsBoard shared attrs: lockState, correctPin,");
     Serial.println("  autoLockDelay, nfcEnabled, authorizedNfcUid,");
     Serial.println("  maxFailedAttempts, lockoutDuration");
-    Serial.println("ThingsBoard RPC: lock, unlock, unlockTemporary, resetLockout");
+    Serial.println("ThingsBoard RPC: unlockTemporary, resetLockout");
     Serial.println("========================================\n");
 }
 

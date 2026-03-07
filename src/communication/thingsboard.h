@@ -12,10 +12,12 @@
  *   lockoutDuration    segundos
  *
  * Comandos RPC recibidos (TB Dashboard → Dispositivo):
- *   lock               → bloquear
- *   unlock             → desbloquear
  *   unlockTemporary    → desbloquear N ms  { "duration": 5000 }
  *   resetLockout       → limpiar bloqueo de intentos
+ *
+ * Control lock/unlock: vía shared attribute "lockState" ("locked"/"unlocked")
+ *   - Dashboard → Dispositivo: TB actualiza shared attr → dispositivo reacciona
+ *   - Dispositivo → Dashboard: dispositivo publica client attr "lockState"
  *
  * Telemetría enviada (Dispositivo → TB):
  *   locked             bool

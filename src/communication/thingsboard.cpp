@@ -29,8 +29,8 @@ static Arduino_MQTT_Client mqttClient(wifiClient);
 // Shared attributes: 1 suscripción, máx 7 atributos
 static Shared_Attribute_Update<1U, 7U> sharedAttrUpdate;
 
-// Server-side RPC: máx 4 callbacks, respuesta con hasta 2 pares clave-valor
-static Server_Side_RPC<4U, 2U> serverSideRPC;
+// Server-side RPC: máx 2 callbacks, respuesta con hasta 2 pares clave-valor
+static Server_Side_RPC<2U, 2U> serverSideRPC;
 
 static const std::array<IAPI_Implementation*, 2U> apis = {
     &sharedAttrUpdate,
@@ -149,28 +149,6 @@ static void processSharedAttributes(const JsonObjectConst& data)
 //   void callback(JsonVariantConst const& params, JsonDocument& response)
 // ============================================
 
-static void on_rpc_lock(JsonVariantConst const& data, JsonDocument& response)
-{
-    Serial.println("[TB] RPC: lock");
-    if (!isProcessingRemoteChange && stateChangeCb) {
-        isProcessingRemoteChange = true;
-        stateChangeCb(true);
-        isProcessingRemoteChange = false;
-    }
-    response["result"] = "locked";
-}
-
-static void on_rpc_unlock(JsonVariantConst const& data, JsonDocument& response)
-{
-    Serial.println("[TB] RPC: unlock");
-    if (!isProcessingRemoteChange && stateChangeCb) {
-        isProcessingRemoteChange = true;
-        stateChangeCb(false);
-        isProcessingRemoteChange = false;
-    }
-    response["result"] = "unlocked";
-}
-
 static void on_rpc_unlock_temporary(JsonVariantConst const& data, JsonDocument& response)
 {
     uint32_t duration = 5000;
@@ -240,9 +218,7 @@ bool thingsboard_connect(void)
     }
 
     // ── Suscribir a RPC ───────────────────────────────────
-    const std::array<RPC_Callback, 4U> rpcCbs = {{
-        RPC_Callback{ "lock",            on_rpc_lock             },
-        RPC_Callback{ "unlock",          on_rpc_unlock           },
+    const std::array<RPC_Callback, 2U> rpcCbs = {{
         RPC_Callback{ "unlockTemporary", on_rpc_unlock_temporary },
         RPC_Callback{ "resetLockout",    on_rpc_reset_lockout    }
     }};
