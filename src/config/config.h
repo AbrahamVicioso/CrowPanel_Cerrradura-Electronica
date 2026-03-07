@@ -7,28 +7,44 @@
 #define CONFIG_H
 
 // ============================================
-// CONFIGURACIÓN DEL SISTEMA
+// VERSIÓN DEL FIRMWARE
 // ============================================
+#define FIRMWARE_VERSION "2.0.0"
+#define FIRMWARE_NAME   "Electronic Lock System"
 
-// Versión del firmware
-#define FIRMWARE_VERSION "1.0.0"
-#define FIRMWARE_NAME "Electronic Lock System"
+// ============================================
+// CONFIGURACIÓN DE LA CERRADURA
+// ============================================
+#define LOCK_DEFAULT_STATE          false   // false = bloqueado
+#define LOCK_AUTO_LOCK_DELAY_MS     5000    // ms antes de re-bloquear (default)
+#define LOCK_AUTO_LOCK_DELAY_MIN    2000    // mínimo permitido via TB
+#define LOCK_AUTO_LOCK_DELAY_MAX    60000   // máximo permitido via TB
 
-// Configuración de la cerradura
-#define LOCK_DEFAULT_STATE false  // false = bloqueado, true = desbloqueado
-#define LOCK_AUTO_LOCK_DELAY_MS 5000  // Tiempo auto-bloqueo en ms
+// ============================================
+// CONFIGURACIÓN DEL PIN
+// ============================================
+#define PIN_LENGTH      6
+#define DEFAULT_PIN     "123456"
 
-// Configuración del PIN
-#define PIN_LENGTH 6
-#define DEFAULT_PIN "123456"
+// ============================================
+// SEGURIDAD — BLOQUEO POR INTENTOS
+// ============================================
+#define MAX_FAILED_ATTEMPTS         3       // intentos antes de lockout
+#define LOCKOUT_DURATION_MS         30000   // 30 segundos de bloqueo
+#define LOCKOUT_DURATION_MIN_S      10      // mínimo configurable desde TB
+#define LOCKOUT_DURATION_MAX_S      300     // máximo configurable desde TB
 
-// Tiempos de espera
-#define WIFI_CONNECT_TIMEOUT_MS 15000
-#define THINGSBOARD_RECONNECT_INTERVAL_MS 5000
-#define NFC_CHECK_INTERVAL_MS 5000  /* Aumentado a 5s para reducir uso de CPU */
+// ============================================
+// TIEMPOS DE ESPERA
+// ============================================
+#define WIFI_CONNECT_TIMEOUT_MS             15000
+#define THINGSBOARD_RECONNECT_INTERVAL_MS   5000
+#define NFC_CHECK_INTERVAL_MS               1000   // 1s para respuesta más ágil
 
-// Dimensiones de pantalla
-#define SCREEN_WIDTH 800
-#define SCREEN_HEIGHT 480
+// ============================================
+// DIMENSIONES DE PANTALLA
+// ============================================
+#define SCREEN_WIDTH    800
+#define SCREEN_HEIGHT   480
 
 #endif // CONFIG_H

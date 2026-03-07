@@ -1,6 +1,6 @@
 /**
  * @file pinpad_screen.cpp
- * @brief Implementación de la pantalla del teclado PIN
+ * @brief Teclado PIN con lockout por intentos fallidos y countdown visual
  */
 
 #include "pinpad_screen.h"
@@ -9,175 +9,260 @@
 #include "../../hardware/display.h"
 
 // ============================================
-// VARIABLES PRIVADAS
+// OBJETOS LVGL
 // ============================================
 
-static lv_obj_t* screen_pinpad = nullptr;
-static lv_obj_t* label_pin_display = nullptr;
-static lv_obj_t* label_status = nullptr;
-static lv_obj_t* label_nfc_status = nullptr;
+static lv_obj_t* screen_pinpad       = nullptr;
+static lv_obj_t* label_pin_display   = nullptr;
+static lv_obj_t* label_status        = nullptr;
+static lv_obj_t* label_nfc_hint      = nullptr;
+static lv_obj_t* label_attempt_dots  = nullptr;  // puntos de intento visual
 
-static String pinCode = "";
+// ============================================
+// ESTADO
+// ============================================
+
+static String pinCode    = "";
 static String correctPin = DEFAULT_PIN;
 
-static PinpadSuccessCallback success_callback = nullptr;
-static PinpadErrorCallback error_callback = nullptr;
+// Lockout
+static int      failedAttempts       = 0;
+static int      maxFailedAttempts    = MAX_FAILED_ATTEMPTS;
+static uint32_t lockoutDurationMs    = LOCKOUT_DURATION_MS;
+static bool     lockedOut            = false;
+static lv_timer_t* lockout_timer     = nullptr;
+static int      lockoutSecondsLeft   = 0;
+static lv_timer_t* lockout_tick      = nullptr;
 
-// Timer de inactividad (15 segundos para volver a standby)
-static lv_timer_t* inactivity_timer = nullptr;
-static void (*inactivity_callback)(void) = nullptr;
+// Inactividad
+static lv_timer_t* inactivity_timer  = nullptr;
+static void (*inactivity_cb)(void)   = nullptr;
+#define PINPAD_INACTIVITY_MS 15000
 
-// Timeout de inactividad en ms
-#define PINPAD_INACTIVITY_TIMEOUT_MS 15000
+// Callbacks externos
+static PinpadSuccessCallback       success_cb       = nullptr;
+static PinpadErrorCallback         error_cb         = nullptr;
+static PinpadFailedAttemptsCallback failed_atts_cb  = nullptr;
 
-// Forward declarations
+// ============================================
+// FORWARD DECLARATIONS
+// ============================================
 static void reset_inactivity_timer(void);
-static void validate_pin_callback(lv_timer_t *t);
-static void restore_status_callback(lv_timer_t *rt);
+static void update_attempt_dots(void);
+static void show_lockout_state(void);
 
 // ============================================
-// FUNCIONES CALLBACK
+// HELPERS VISUALES
 // ============================================
 
-/**
- * @brief Callback para validar el PIN (reemplaza lambda)
- */
-static void validate_pin_callback(lv_timer_t *t)
+static void update_attempt_dots(void)
 {
-    if (pinCode == correctPin)
-    {
-        lv_label_set_text(label_status, "ACCESO OK");
-        lv_obj_set_style_text_color(label_status, COLOR_SUCCESS, 0);
+    if (!label_attempt_dots) return;
 
-        if (success_callback) {
-            success_callback();
-        }
+    // Mostrar círculos: rojo para fallidos, gris para restantes
+    String dots = "";
+    for (int i = 0; i < maxFailedAttempts; i++) {
+        if (i > 0) dots += " ";
+        dots += (i < failedAttempts) ? LV_SYMBOL_CLOSE : LV_SYMBOL_MINUS;
     }
-    else
-    {
-        lv_label_set_text(label_status, "PIN INCORRECTO");
+    lv_label_set_text(label_attempt_dots, dots.c_str());
+    lv_obj_set_style_text_color(label_attempt_dots,
+        failedAttempts > 0 ? COLOR_ERROR : COLOR_TEXT_MUTED, 0);
+}
+
+// ============================================
+// LOCKOUT
+// ============================================
+
+static void lockout_tick_cb(lv_timer_t* t)
+{
+    lockoutSecondsLeft--;
+    if (lockoutSecondsLeft <= 0) {
+        lv_timer_del(t);
+        lockout_tick = nullptr;
+    }
+    if (label_status && lockedOut) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "BLOQUEADO — %ds", lockoutSecondsLeft > 0 ? lockoutSecondsLeft : 0);
+        lv_label_set_text(label_status, buf);
         lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
-
-        if (error_callback) {
-            error_callback();
-        }
-
-        pinCode = "";
-        lv_label_set_text(label_pin_display, "");
-
-        // Restaurar mensaje después de 2 segundos
-        lv_timer_t *restore_timer = lv_timer_create(restore_status_callback, 2000, NULL);
-        lv_timer_set_repeat_count(restore_timer, 1);
     }
+}
+
+static void lockout_end_cb(lv_timer_t* t)
+{
     lv_timer_del(t);
-}
+    lockout_timer = nullptr;
 
-/**
- * @brief Callback para restaurar el mensaje de estado (reemplaza lambda)
- */
-static void restore_status_callback(lv_timer_t *rt)
-{
-    lv_label_set_text(label_status, "Ingrese PIN");
-    lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-    lv_timer_del(rt);
-}
+    if (lockout_tick) { lv_timer_del(lockout_tick); lockout_tick = nullptr; }
 
-static void btn_num_event_cb(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
+    lockedOut      = false;
+    failedAttempts = 0;
 
-    if (code == LV_EVENT_CLICKED)
-    {
-        lv_obj_t *btn = lv_event_get_target(e);
-        const char *num = lv_label_get_text(lv_obj_get_child(btn, 0));
-
-        if (pinCode.length() < PIN_LENGTH)
-        {
-            pinCode += num;
-            
-            // Reiniciar timer de inactividad
-            reset_inactivity_timer();
-            
-            // Ocultar textos de ayuda cuando hay input
-            if (pinCode.length() == 1) {
-                lv_obj_add_flag(label_status, LV_OBJ_FLAG_HIDDEN);
-                lv_obj_add_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
-            }
-            
-            // Actualizar display con puntos
-            String display = "";
-            for (int i = 0; i < pinCode.length(); i++)
-            {
-                display += "*";
-            }
-            lv_label_set_text(label_pin_display, display.c_str());
-
-            // Validar automáticamente cuando llegue a PIN_LENGTH dígitos
-            if (pinCode.length() == PIN_LENGTH)
-            {
-                // Usar función en vez de lambda para evitar memory leak
-                lv_timer_t *timer = lv_timer_create(validate_pin_callback, 300, NULL);
-                lv_timer_set_repeat_count(timer, 1);
-            }
-        }
-    }
-}
-
-static void btn_clear_event_cb(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-
-    if (code == LV_EVENT_CLICKED)
-    {
-        pinCode = "";
-        lv_label_set_text(label_pin_display, "");
+    if (label_status) {
         lv_label_set_text(label_status, "Ingrese PIN");
         lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-        // Mostrar textos de ayuda
-        lv_obj_clear_flag(label_status, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
-        
-        // Reiniciar timer de inactividad
-        reset_inactivity_timer();
+    }
+    update_attempt_dots();
+    Serial.println("[Pinpad] Lockout terminado");
+}
+
+static void show_lockout_state(void)
+{
+    lockedOut = true;
+    lockoutSecondsLeft = (int)(lockoutDurationMs / 1000);
+
+    if (lockout_timer) lv_timer_del(lockout_timer);
+    if (lockout_tick)  lv_timer_del(lockout_tick);
+
+    lockout_timer = lv_timer_create(lockout_end_cb, lockoutDurationMs, NULL);
+    lv_timer_set_repeat_count(lockout_timer, 1);
+
+    // Tick cada segundo para countdown
+    lockout_tick = lv_timer_create(lockout_tick_cb, 1000, NULL);
+
+    if (label_status) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "BLOQUEADO — %ds", lockoutSecondsLeft);
+        lv_label_set_text(label_status, buf);
+        lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
+    }
+    if (label_nfc_hint) lv_obj_add_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
+
+    Serial.printf("[Pinpad] LOCKOUT por %d s (%d intentos fallidos)\n",
+                  lockoutSecondsLeft, failedAttempts);
+}
+
+// ============================================
+// TIMER CALLBACKS
+// ============================================
+
+static void validate_pin_cb(lv_timer_t* t)
+{
+    lv_timer_del(t);
+
+    if (lockedOut) return;
+
+    if (pinCode == correctPin) {
+        // ── Éxito ──
+        lv_label_set_text(label_status, "ACCESO OK");
+        lv_obj_set_style_text_color(label_status, COLOR_SUCCESS, 0);
+        failedAttempts = 0;
+        update_attempt_dots();
+        if (success_cb) success_cb();
+    } else {
+        // ── Fallo ──
+        failedAttempts++;
+        if (failed_atts_cb) failed_atts_cb(failedAttempts);
+        update_attempt_dots();
+
+        pinCode = "";
+        if (label_pin_display) lv_label_set_text(label_pin_display, "");
+
+        if (failedAttempts >= maxFailedAttempts) {
+            show_lockout_state();
+            if (error_cb) error_cb();
+        } else {
+            int restantes = maxFailedAttempts - failedAttempts;
+            char buf[48];
+            snprintf(buf, sizeof(buf), "PIN incorrecto (%d restante%s)",
+                     restantes, restantes == 1 ? "" : "s");
+            if (label_status) {
+                lv_label_set_text(label_status, buf);
+                lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
+            }
+            if (error_cb) error_cb();
+
+            // Restaurar mensaje después de 2s
+            lv_timer_t* rt = lv_timer_create([](lv_timer_t* rt2){
+                lv_timer_del(rt2);
+                if (label_status && !lockedOut) {
+                    lv_label_set_text(label_status, "Ingrese PIN");
+                    lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+                }
+                if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
+            }, 2000, NULL);
+            lv_timer_set_repeat_count(rt, 1);
+        }
     }
 }
 
-// Timer de inactividad - vuelve a standby después de 15 segundos
-static void inactivity_timer_callback(lv_timer_t* timer)
+static void inactivity_timer_cb(lv_timer_t* timer)
 {
     lv_timer_del(timer);
-    inactivity_timer = nullptr;  // Resetear puntero
+    inactivity_timer = nullptr;
 
-    // Reset PIN y ejecutar callback de inactividad
+    if (lockedOut) return;  // Si está bloqueado, no volver a standby
+
     pinCode = "";
     if (label_pin_display) lv_label_set_text(label_pin_display, "");
 
-    if (inactivity_callback != nullptr) {
-        void (*cb)(void) = inactivity_callback;  // Copiar callback
-        inactivity_callback = nullptr;            // Resetear para evitar doble ejecución
-        cb();                                     // Ejecutar callback
+    if (inactivity_cb) {
+        auto cb = inactivity_cb;
+        inactivity_cb = nullptr;
+        cb();
     }
 }
 
-// Reinicia el timer de inactividad
 static void reset_inactivity_timer(void)
 {
-    // Eliminar timer anterior si existe
-    if (inactivity_timer != nullptr) {
-        lv_timer_del(inactivity_timer);
-    }
-    
-    // Crear nuevo timer de 15 segundos
-    inactivity_timer = lv_timer_create(
-        inactivity_timer_callback, 
-        PINPAD_INACTIVITY_TIMEOUT_MS, 
-        NULL
-    );
+    if (inactivity_timer) lv_timer_del(inactivity_timer);
+    inactivity_timer = lv_timer_create(inactivity_timer_cb, PINPAD_INACTIVITY_MS, NULL);
     lv_timer_set_repeat_count(inactivity_timer, 1);
 }
 
 // ============================================
-// FUNCIONES PÚBLICAS
+// EVENTOS DE BOTONES
+// ============================================
+
+static void btn_num_event_cb(lv_event_t* e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (lockedOut) return;
+
+    lv_obj_t* btn = lv_event_get_target(e);
+    const char* num = lv_label_get_text(lv_obj_get_child(btn, 0));
+
+    if (pinCode.length() < (size_t)PIN_LENGTH) {
+        pinCode += num;
+        reset_inactivity_timer();
+
+        if (pinCode.length() == 1) {
+            if (label_status) lv_obj_add_flag(label_status, LV_OBJ_FLAG_HIDDEN);
+            if (label_nfc_hint) lv_obj_add_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        // Mostrar asteriscos
+        String display = "";
+        for (size_t i = 0; i < pinCode.length(); i++) display += "*";
+        if (label_pin_display) lv_label_set_text(label_pin_display, display.c_str());
+
+        // Validar al completar PIN_LENGTH dígitos
+        if (pinCode.length() == (size_t)PIN_LENGTH) {
+            lv_timer_t* vt = lv_timer_create(validate_pin_cb, 300, NULL);
+            lv_timer_set_repeat_count(vt, 1);
+        }
+    }
+}
+
+static void btn_clear_event_cb(lv_event_t* e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (lockedOut) return;
+
+    pinCode = "";
+    if (label_pin_display) lv_label_set_text(label_pin_display, "");
+    if (label_status) {
+        lv_label_set_text(label_status, "Ingrese PIN");
+        lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+        lv_obj_clear_flag(label_status, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
+    reset_inactivity_timer();
+}
+
+// ============================================
+// CREAR PANTALLA
 // ============================================
 
 lv_obj_t* pinpad_screen_create(void)
@@ -186,206 +271,162 @@ lv_obj_t* pinpad_screen_create(void)
     lv_obj_set_style_bg_color(screen_pinpad, COLOR_PRIMARY, 0);
     lv_obj_clear_flag(screen_pinpad, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ==================== HEADER BACKGROUND ====================
-    
-    // Barra de título como label (sin scroll)
-    lv_obj_t *header_bg = lv_obj_create(screen_pinpad);
-    lv_obj_set_size(header_bg, 800, 60);
-    lv_obj_set_pos(header_bg, 0, 0);
-    lv_obj_set_style_bg_color(header_bg, COLOR_SECONDARY, 0);
-    lv_obj_set_style_border_width(header_bg, 0, 0);
-    lv_obj_set_style_radius(header_bg, 0, 0);
-    lv_obj_clear_flag(header_bg, LV_OBJ_FLAG_SCROLLABLE);
+    // ── Header ──────────────────────────────────────────────
+    lv_obj_t* header = lv_obj_create(screen_pinpad);
+    lv_obj_set_size(header, 800, 60);
+    lv_obj_set_pos(header, 0, 0);
+    lv_obj_set_style_bg_color(header, COLOR_SECONDARY, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_radius(header, 0, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Icono de candado en header (como label, no scroll)
-    lv_obj_t *lock_icon = lv_label_create(header_bg);
+    lv_obj_t* lock_icon = lv_label_create(header);
     lv_label_set_text(lock_icon, LV_SYMBOL_LOOP);
     lv_obj_set_style_text_font(lock_icon, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lock_icon, COLOR_ACCENT, 0);
     lv_obj_set_pos(lock_icon, 30, 18);
 
-    // Título del header (como label fijo)
-    lv_obj_t *label_title = lv_label_create(header_bg);
+    lv_obj_t* label_title = lv_label_create(header);
     lv_label_set_text(label_title, "CONTROL DE ACCESO");
     lv_obj_set_style_text_font(label_title, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(label_title, COLOR_TEXT, 0);
     lv_obj_set_pos(label_title, 70, 20);
 
-    // ==================== STATUS PANEL ====================
-    
-    // Contenedor de estado
-    lv_obj_t *status_container = lv_obj_create(screen_pinpad);
-    lv_obj_set_size(status_container, 400, 110);
-    lv_obj_set_pos(status_container, 200, 75);
-    lv_obj_set_style_bg_color(status_container, COLOR_SECONDARY, 0);
-    lv_obj_set_style_radius(status_container, 15, 0);
-    lv_obj_set_style_border_width(status_container, 0, 0);
-    lv_obj_set_style_pad_all(status_container, 10, 0);
-    lv_obj_clear_flag(status_container, LV_OBJ_FLAG_SCROLLABLE);
+    // ── Panel de estado ──────────────────────────────────────
+    lv_obj_t* status_cont = lv_obj_create(screen_pinpad);
+    lv_obj_set_size(status_cont, 420, 120);
+    lv_obj_set_pos(status_cont, 190, 72);
+    lv_obj_set_style_bg_color(status_cont, COLOR_SECONDARY, 0);
+    lv_obj_set_style_radius(status_cont, 15, 0);
+    lv_obj_set_style_border_width(status_cont, 0, 0);
+    lv_obj_set_style_pad_all(status_cont, 10, 0);
+    lv_obj_clear_flag(status_cont, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Label de estado
-    label_status = lv_label_create(status_container);
+    label_status = lv_label_create(status_cont);
     lv_label_set_text(label_status, "Ingrese PIN");
     lv_obj_set_style_text_font(label_status, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_align(label_status, LV_ALIGN_TOP_MID, 0, 15);
+    lv_obj_align(label_status, LV_ALIGN_TOP_MID, 0, 8);
 
-    // Display del PIN
-    label_pin_display = lv_label_create(status_container);
+    label_pin_display = lv_label_create(status_cont);
     lv_label_set_text(label_pin_display, "");
     lv_obj_set_style_text_font(label_pin_display, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(label_pin_display, COLOR_TEXT, 0);
-    lv_obj_align(label_pin_display, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(label_pin_display, LV_ALIGN_CENTER, 0, 5);
 
-    // Label NFC
-    label_nfc_status = lv_label_create(status_container);
-    lv_label_set_text(label_nfc_status, "Use tarjeta NFC");
-    lv_obj_set_style_text_font(label_nfc_status, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(label_nfc_status, COLOR_TEXT_MUTED, 0);
-    lv_obj_align(label_nfc_status, LV_ALIGN_BOTTOM_MID, 0, -10);
+    label_nfc_hint = lv_label_create(status_cont);
+    lv_label_set_text(label_nfc_hint, "o acerca tu tarjeta NFC");
+    lv_obj_set_style_text_font(label_nfc_hint, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(label_nfc_hint, COLOR_TEXT_MUTED, 0);
+    lv_obj_align(label_nfc_hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 
-    // ==================== KEYPAD ====================
-    
-    const char *btn_labels[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9"};
+    // ── Puntos de intento ────────────────────────────────────
+    label_attempt_dots = lv_label_create(screen_pinpad);
+    lv_label_set_text(label_attempt_dots, "");
+    lv_obj_set_style_text_font(label_attempt_dots, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label_attempt_dots, COLOR_TEXT_MUTED, 0);
+    lv_obj_set_pos(label_attempt_dots, 0, 202);
+    lv_obj_set_width(label_attempt_dots, 800);
+    lv_obj_set_style_text_align(label_attempt_dots, LV_TEXT_ALIGN_CENTER, 0);
+    update_attempt_dots();
 
-    int spacing = 12;
-    int btn_width = 80;
-    int btn_height = 55;
-    int start_x = 260;
-    int start_y = 195;
+    // ── Teclado numérico ─────────────────────────────────────
+    const char* labels[] = {"1","2","3","4","5","6","7","8","9"};
+    const int   bw = 80, bh = 56, sp = 12;
+    const int   sx = 260, sy = 220;
 
-    // Crear botones 1-9
-    for (int i = 0; i < 9; i++)
-    {
-        int row = i / 3;
-        int col = i % 3;
-
-        lv_obj_t *btn = lv_btn_create(screen_pinpad);
-        lv_obj_set_size(btn, btn_width, btn_height);
-        lv_obj_set_pos(btn, start_x + col * (btn_width + spacing), start_y + row * (btn_height + spacing));
+    for (int i = 0; i < 9; i++) {
+        int row = i / 3, col = i % 3;
+        lv_obj_t* btn = lv_btn_create(screen_pinpad);
+        lv_obj_set_size(btn, bw, bh);
+        lv_obj_set_pos(btn, sx + col*(bw+sp), sy + row*(bh+sp));
         lv_obj_set_style_bg_color(btn, COLOR_BUTTON, LV_PART_MAIN);
         lv_obj_set_style_bg_color(btn, COLOR_BUTTON_PRESSED, LV_STATE_PRESSED);
-        lv_obj_set_style_radius(btn, 10, 0);
-        lv_obj_set_style_shadow_width(btn, 5, 0);
-        lv_obj_set_style_shadow_opa(btn, LV_OPA_30, LV_PART_MAIN);
+        lv_obj_set_style_radius(btn, 12, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
 
-        lv_obj_t *label = lv_label_create(btn);
-        lv_label_set_text(label, btn_labels[i]);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
-        lv_obj_set_style_text_color(label, COLOR_TEXT, 0);
-        lv_obj_center(label);
-
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, labels[i]);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(lbl, COLOR_TEXT, 0);
+        lv_obj_center(lbl);
         lv_obj_add_event_cb(btn, btn_num_event_cb, LV_EVENT_CLICKED, NULL);
     }
 
-    // Botón de borrar (C)
-    lv_obj_t *btn_clear = lv_btn_create(screen_pinpad);
-    lv_obj_set_size(btn_clear, btn_width, btn_height);
-    lv_obj_set_pos(btn_clear, start_x, start_y + 3 * (btn_height + spacing));
-    lv_obj_set_style_bg_color(btn_clear, COLOR_ERROR, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn_clear, 10, 0);
-    lv_obj_set_style_shadow_width(btn_clear, 5, 0);
-    lv_obj_set_style_shadow_opa(btn_clear, LV_OPA_30, LV_PART_MAIN);
-
-    lv_obj_t *label_clear = lv_label_create(btn_clear);
-    lv_label_set_text(label_clear, "C");
-    lv_obj_set_style_text_font(label_clear, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(label_clear, COLOR_TEXT, 0);
-    lv_obj_center(label_clear);
-
-    lv_obj_add_event_cb(btn_clear, btn_clear_event_cb, LV_EVENT_CLICKED, NULL);
+    // Botón C (borrar)
+    lv_obj_t* btn_c = lv_btn_create(screen_pinpad);
+    lv_obj_set_size(btn_c, bw, bh);
+    lv_obj_set_pos(btn_c, sx, sy + 3*(bh+sp));
+    lv_obj_set_style_bg_color(btn_c, COLOR_ERROR, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(btn_c, lv_color_hex(0xc0392b), LV_STATE_PRESSED);
+    lv_obj_set_style_radius(btn_c, 12, 0);
+    lv_obj_set_style_border_width(btn_c, 0, 0);
+    lv_obj_t* lbl_c = lv_label_create(btn_c);
+    lv_label_set_text(lbl_c, LV_SYMBOL_BACKSPACE);
+    lv_obj_set_style_text_font(lbl_c, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(lbl_c, COLOR_TEXT, 0);
+    lv_obj_center(lbl_c);
+    lv_obj_add_event_cb(btn_c, btn_clear_event_cb, LV_EVENT_CLICKED, NULL);
 
     // Botón 0
-    lv_obj_t *btn_0 = lv_btn_create(screen_pinpad);
-    lv_obj_set_size(btn_0, btn_width, btn_height);
-    lv_obj_set_pos(btn_0, start_x + (btn_width + spacing), start_y + 3 * (btn_height + spacing));
+    lv_obj_t* btn_0 = lv_btn_create(screen_pinpad);
+    lv_obj_set_size(btn_0, bw, bh);
+    lv_obj_set_pos(btn_0, sx + (bw+sp), sy + 3*(bh+sp));
     lv_obj_set_style_bg_color(btn_0, COLOR_BUTTON, LV_PART_MAIN);
     lv_obj_set_style_bg_color(btn_0, COLOR_BUTTON_PRESSED, LV_STATE_PRESSED);
-    lv_obj_set_style_radius(btn_0, 10, 0);
-    lv_obj_set_style_shadow_width(btn_0, 5, 0);
-    lv_obj_set_style_shadow_opa(btn_0, LV_OPA_30, LV_PART_MAIN);
-
-    lv_obj_t *label_0 = lv_label_create(btn_0);
-    lv_label_set_text(label_0, "0");
-    lv_obj_set_style_text_font(label_0, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(label_0, COLOR_TEXT, 0);
-    lv_obj_center(label_0);
-
+    lv_obj_set_style_radius(btn_0, 12, 0);
+    lv_obj_set_style_border_width(btn_0, 0, 0);
+    lv_obj_t* lbl_0 = lv_label_create(btn_0);
+    lv_label_set_text(lbl_0, "0");
+    lv_obj_set_style_text_font(lbl_0, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_0, COLOR_TEXT, 0);
+    lv_obj_center(lbl_0);
     lv_obj_add_event_cb(btn_0, btn_num_event_cb, LV_EVENT_CLICKED, NULL);
 
-    // Botón OK
-    lv_obj_t *btn_ok = lv_btn_create(screen_pinpad);
-    lv_obj_set_size(btn_ok, btn_width, btn_height);
-    lv_obj_set_pos(btn_ok, start_x + 2 * (btn_width + spacing), start_y + 3 * (btn_height + spacing));
+    // Botón OK (decorativo — validación es automática)
+    lv_obj_t* btn_ok = lv_btn_create(screen_pinpad);
+    lv_obj_set_size(btn_ok, bw, bh);
+    lv_obj_set_pos(btn_ok, sx + 2*(bw+sp), sy + 3*(bh+sp));
     lv_obj_set_style_bg_color(btn_ok, COLOR_SUCCESS, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn_ok, 10, 0);
-    lv_obj_set_style_shadow_width(btn_ok, 5, 0);
-    lv_obj_set_style_shadow_opa(btn_ok, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_radius(btn_ok, 12, 0);
+    lv_obj_set_style_border_width(btn_ok, 0, 0);
     lv_obj_clear_flag(btn_ok, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *label_ok = lv_label_create(btn_ok);
-    lv_label_set_text(label_ok, "OK");
-    lv_obj_set_style_text_font(label_ok, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(label_ok, COLOR_TEXT, 0);
-    lv_obj_center(label_ok);
+    lv_obj_t* lbl_ok = lv_label_create(btn_ok);
+    lv_label_set_text(lbl_ok, LV_SYMBOL_OK);
+    lv_obj_set_style_text_font(lbl_ok, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(lbl_ok, COLOR_TEXT, 0);
+    lv_obj_center(lbl_ok);
 
     return screen_pinpad;
 }
 
-/**
- * @brief Muestra la pantalla del PIN con animación
- */
+// ============================================
+// API PÚBLICA
+// ============================================
+
 void pinpad_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uint32_t duration)
 {
-    display_turn_on();  // Asegurar que el backlight estéendido
+    display_turn_on();
     lv_scr_load_anim(screen_pinpad, anim_type, duration, 0, false);
-    
-    // Iniciar timer de inactividad (15 segundos)
-    reset_inactivity_timer();
+    if (!lockedOut) reset_inactivity_timer();
 }
 
-/**
- * @brief Establece el callback de inactividad (cuando pasan 15 segundos sin actividad)
- */
-void pinpad_set_inactivity_callback(void (*callback)(void))
-{
-    inactivity_callback = callback;
-}
-
-void pinpad_set_success_callback(PinpadSuccessCallback callback)
-{
-    success_callback = callback;
-}
-
-void pinpad_set_error_callback(PinpadErrorCallback callback)
-{
-    error_callback = callback;
-}
+void pinpad_set_success_callback(PinpadSuccessCallback cb)              { success_cb     = cb; }
+void pinpad_set_error_callback(PinpadErrorCallback cb)                  { error_cb       = cb; }
+void pinpad_set_failed_attempts_callback(PinpadFailedAttemptsCallback cb){ failed_atts_cb = cb; }
+void pinpad_set_inactivity_callback(void (*cb)(void))                   { inactivity_cb  = cb; }
 
 void pinpad_reset(void)
 {
     pinCode = "";
-
-    // CRITICAL: Limpiar timer de inactividad para evitar callbacks fantasma
-    if (inactivity_timer != nullptr) {
-        lv_timer_del(inactivity_timer);
-        inactivity_timer = nullptr;
-    }
-
-    if (label_pin_display != nullptr) {
-        lv_label_set_text(label_pin_display, "");
-    }
-    if (label_status != nullptr) {
+    if (inactivity_timer) { lv_timer_del(inactivity_timer); inactivity_timer = nullptr; }
+    if (label_pin_display) lv_label_set_text(label_pin_display, "");
+    if (label_status) {
         lv_label_set_text(label_status, "Ingrese PIN");
         lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-    }
-    // Mostrar textos de ayuda
-    if (label_nfc_status != nullptr) {
-        lv_obj_clear_flag(label_nfc_status, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (label_status != nullptr) {
         lv_obj_clear_flag(label_status, LV_OBJ_FLAG_HIDDEN);
     }
+    if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
 }
 
 std::string pinpad_get_pin(void)
@@ -396,11 +437,45 @@ std::string pinpad_get_pin(void)
 void pinpad_set_correct_pin(const String& pin)
 {
     correctPin = pin;
+    Serial.printf("[Pinpad] PIN actualizado\n");
+}
+
+void pinpad_set_max_failed_attempts(int max)
+{
+    maxFailedAttempts = (max < 1) ? 1 : max;
+    update_attempt_dots();
+}
+
+void pinpad_set_lockout_duration_ms(uint32_t ms)
+{
+    lockoutDurationMs = ms;
+}
+
+void pinpad_reset_failed_attempts(void)
+{
+    failedAttempts = 0;
+    if (lockedOut) {
+        if (lockout_timer) { lv_timer_del(lockout_timer); lockout_timer = nullptr; }
+        if (lockout_tick)  { lv_timer_del(lockout_tick);  lockout_tick  = nullptr; }
+        lockedOut = false;
+        if (label_status) {
+            lv_label_set_text(label_status, "Ingrese PIN");
+            lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+        }
+        if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
+    }
+    update_attempt_dots();
+    Serial.println("[Pinpad] Intentos fallidos reseteados");
+}
+
+bool pinpad_is_locked_out(void)
+{
+    return lockedOut;
 }
 
 void pinpad_show_status(const char* message, lv_color_t color)
 {
-    if (label_status != nullptr) {
+    if (label_status) {
         lv_label_set_text(label_status, message);
         lv_obj_set_style_text_color(label_status, color, 0);
     }

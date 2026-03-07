@@ -1,22 +1,25 @@
 /**
  * @file main.cpp
- * @brief Sistema de Cerradura Electrónica - Punto de entrada principal
- * 
- * Este proyecto implementa un sistema de control de acceso con:
- * - Interfaz táctil con PIN
- * - Lector NFC
- * - Integración con ThingsBoard (MQTT)
- * - Control de cerradura electrónica
+ * @brief Sistema de Cerradura Electrónica v2.0
+ *
+ * Mejoras v2.0:
+ *  - ThingsBoard: 7 shared attributes + 4 RPC + telemetría completa
+ *  - NFC: verificación de UID autorizado (configurable desde TB)
+ *  - Seguridad: lockout por intentos fallidos (configurable desde TB)
+ *  - Persistencia NVS: PIN y configuración sobreviven al reinicio
+ *  - Standby: indicadores WiFi/TB en tiempo real
+ *  - PIN y auto-lock delay: configurables remotamente desde TB Dashboard
  */
 
 #include <Arduino.h>
 #include <lvgl.h>
 #include <Wire.h>
+#include <WiFi.h>
 
-// Módulos del sistema
 #include "config/config.h"
 #include "config/pins.h"
 #include "config/network_config.h"
+#include "config/storage.h"
 
 #include "hardware/display.h"
 #include "hardware/touch.h"
@@ -34,93 +37,70 @@
 #include "ui/screens/error_screen.h"
 
 // ============================================
-// VARIABLES GLOBALES DE LVGL
+// VARIABLES GLOBALES LVGL
 // ============================================
 
-static uint32_t screenWidth = DISPLAY_WIDTH;
-static uint32_t screenHeight = DISPLAY_HEIGHT;
 static lv_disp_draw_buf_t draw_buf;
+static lv_color_t*        disp_buf1;
+static lv_color_t*        disp_buf2;
+static lv_disp_drv_t      disp_drv;
 
-// Buffers usando PSRAM para evitar fragmentación y mejor performance
-// Doble buffer en PSRAM: buffer1 para renderizado activo, buffer2 para DMA
-static lv_color_t* disp_draw_buf1;  // Ubicado en PSRAM
-static lv_color_t* disp_draw_buf2;  // Ubicado en PSRAM
-static lv_disp_drv_t disp_drv;
+// Timer NFC
+static lv_timer_t* nfc_timer = nullptr;
 
-// Timer para NFC
-static lv_timer_t *nfc_timer = nullptr;
+// Flag de control de flujo (evitar pantallas concurrentes)
+static volatile bool screen_busy  = false;
+static volatile bool is_unlocking = false;
 
-// Flags para evitar múltiples activaciones
-static volatile bool is_screen_active = false;  // Flag para evitar pantallas concurrentes
-static volatile bool is_unlocking = false;       // Flag para evitar desbloqueos simultáneos
+// Config dinámica (puede cambiar via ThingsBoard)
+static uint32_t current_auto_lock_delay = LOCK_AUTO_LOCK_DELAY_MS;
+static bool     nfc_enabled             = true;
+static int      failed_attempts_count   = 0;
 
 // Pantallas
-static lv_obj_t* screen_welcome = nullptr;
-static lv_obj_t* screen_standby = nullptr;
-static lv_obj_t* screen_pinpad = nullptr;
+static lv_obj_t* screen_welcome  = nullptr;
+static lv_obj_t* screen_standby  = nullptr;
+static lv_obj_t* screen_pinpad   = nullptr;
 static lv_obj_t* screen_unlocked = nullptr;
-static lv_obj_t* screen_locked = nullptr;
-static lv_obj_t* screen_error = nullptr;
+static lv_obj_t* screen_locked   = nullptr;
+static lv_obj_t* screen_error    = nullptr;
 
 // ============================================
-// CALLBACKS DE LVGL
+// CALLBACKS LVGL
 // ============================================
 
-/**
- * @brief Callback de flush del display
- */
-void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
+void my_disp_flush(lv_disp_drv_t* disp, const lv_area_t* area, lv_color_t* color_p)
 {
-    uint32_t w = (area->x2 - area->x1 + 1);
-    uint32_t h = (area->y2 - area->y1 + 1);
+    uint32_t w = area->x2 - area->x1 + 1;
+    uint32_t h = area->y2 - area->y1 + 1;
     lcd.pushImageDMA(area->x1, area->y1, w, h, (lgfx::rgb565_t*)&color_p->full);
     lv_disp_flush_ready(disp);
 }
 
-/**
- * @brief Callback de lectura del touchpad
- */
-void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
+void my_touchpad_read(lv_indev_drv_t* indev_driver, lv_indev_data_t* data)
 {
     ts.read();
-    if (ts.isTouched)
-    {
-        data->state = LV_INDEV_STATE_PR;
-        
-        // Mapping de coordenadas con soporte para swap
-        #ifdef TOUCH_SWAP_XY
-        data->point.x = map(ts.points[0].y, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width() - 1);
-        data->point.y = map(ts.points[0].x, TOUCH_MAP_Y1, TOUCH_MAP_Y2, 0, lcd.height() - 1);
-        #else
-        data->point.x = map(ts.points[0].x, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width() - 1);
+    if (ts.isTouched) {
+        data->state   = LV_INDEV_STATE_PR;
+        data->point.x = map(ts.points[0].x, TOUCH_MAP_X1, TOUCH_MAP_X2, 0, lcd.width()  - 1);
         data->point.y = map(ts.points[0].y, TOUCH_MAP_Y1, TOUCH_MAP_Y2, 0, lcd.height() - 1);
-        #endif
-    }
-    else
-    {
+    } else {
         data->state = LV_INDEV_STATE_REL;
     }
-    // Removed delay(5) - it was blocking and unnecessary
 }
 
 // ============================================
-// CALLBACKS DE EVENTOS (SIN LAMBDAS ANIDADAS)
+// FLUJO DE PANTALLAS
 // ============================================
 
-/**
- * @brief Callback final: volver a standby desde locked
- */
 void on_return_to_standby(void)
 {
     pinpad_reset();
     display_turn_on();
     lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-    is_screen_active = false;  // Liberar el flag al final del flujo
+    screen_busy = false;
 }
 
-/**
- * @brief Callback después de unlock: mostrar locked y volver
- */
 void on_lock_after_unlock(void)
 {
     lock_lock();
@@ -129,337 +109,412 @@ void on_lock_after_unlock(void)
     locked_screen_show(on_return_to_standby);
 }
 
-/**
- * @brief Callback cuando el PIN es correcto
- */
-void on_pin_success(void)
+// ── Desbloqueo (cualquier método) ───────────────────────────
+
+static void do_unlock(const char* method)
 {
-    // Evitar activación si ya está activo
-    if (is_screen_active || is_unlocking) return;
-    is_screen_active = true;
+    if (screen_busy || is_unlocking) return;
+    screen_busy  = true;
     is_unlocking = true;
 
     lock_unlock();
     thingsboard_publish_lock_state(lock_get_state());
+    thingsboard_publish_access_event(true, method);
     display_turn_on();
 
-    unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, on_lock_after_unlock);
-
-    // Resetear flag de unlocking después de un momento
+    unlocked_screen_show(current_auto_lock_delay, on_lock_after_unlock);
     is_unlocking = false;
 }
 
-/**
- * @brief Callback para volver a standby después de error
- */
+// ── RPC unlockTemporary (duración personalizada) ─────────────
+
+// Timer para bloquear tras unlockTemporary
+static lv_timer_t* rpc_temp_timer = nullptr;
+
+static void rpc_temp_lock_cb(lv_timer_t* t)
+{
+    lv_timer_del(t);
+    rpc_temp_timer = nullptr;
+    on_lock_after_unlock();
+}
+
+static void do_unlock_temporary(uint32_t durationMs)
+{
+    if (screen_busy || is_unlocking) return;
+    screen_busy  = true;
+    is_unlocking = true;
+
+    lock_unlock();
+    thingsboard_publish_lock_state(lock_get_state());
+    thingsboard_publish_access_event(true, "rpc_temp");
+    display_turn_on();
+
+    // Mostrar pantalla desbloqueada con el tiempo especificado
+    unlocked_screen_show(durationMs, on_lock_after_unlock);
+    is_unlocking = false;
+}
+
+// ============================================
+// CALLBACKS DE ACCESO
+// ============================================
+
+void on_pin_success(void)
+{
+    do_unlock("pin");
+}
+
+void on_pin_error(void)
+{
+    // Si hay lockout activo, el pinpad ya muestra el countdown — no cambiar pantalla
+    if (pinpad_is_locked_out()) return;
+
+    // PIN incorrecto sin lockout: mostrar error screen brevemente
+    if (screen_busy) return;
+    screen_busy = true;
+    display_turn_on();
+    error_screen_show([]() {
+        // Volver al pinpad (no a standby, para que el usuario reintente)
+        display_turn_on();
+        lv_scr_load_anim(screen_pinpad, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+        screen_busy = false;
+    }, 1200);
+}
+
+void on_failed_attempts_changed(int count)
+{
+    failed_attempts_count = count;
+    thingsboard_publish_failed_attempts(count);
+    Serial.printf("[Main] Intentos fallidos: %d/%d\n",
+                  count, storage_get_max_failed_attempts());
+}
+
 void on_error_return_to_standby(void)
 {
     pinpad_reset();
     display_turn_on();
     lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-    is_screen_active = false;
+    screen_busy = false;
 }
 
-/**
- * @brief Callback cuando el PIN es incorrecto
- */
-void on_pin_error(void)
-{
-    // Evitar activación si ya está activo
-    if (is_screen_active) return;
-    is_screen_active = true;
+// ============================================
+// CALLBACKS THINGSBOARD — SHARED ATTRIBUTES
+// ============================================
 
-    display_turn_on();
-    error_screen_show(on_error_return_to_standby, 1500);
+void on_remote_state_change(bool locked)
+{
+    Serial.printf("[Main] Comando remoto: %s\n", locked ? "BLOQUEAR" : "DESBLOQUEAR");
+
+    if (locked) {
+        lock_lock();
+        thingsboard_publish_lock_state(lock_get_state());
+        thingsboard_publish_access_event(false, "remote");
+        // Si no está en standby → volver a standby
+        if (lv_scr_act() != screen_standby) {
+            screen_busy = false;
+            display_turn_on();
+            lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+        }
+    } else {
+        do_unlock("remote");
+    }
 }
 
-/**
- * @brief Callback de timer para verificar NFC
- */
-void nfc_check_timer_cb(lv_timer_t *timer)
+void on_pin_update(const char* newPin)
 {
-    // Evitar activación si ya está activo
-    if (is_screen_active || is_unlocking) return;
+    Serial.printf("[Main] PIN actualizado desde TB: %s\n", newPin);
+    pinpad_set_correct_pin(String(newPin));
+}
+
+void on_auto_lock_delay_update(uint32_t delayMs)
+{
+    current_auto_lock_delay = delayMs;
+    Serial.printf("[Main] Auto-lock delay: %u ms\n", delayMs);
+}
+
+void on_nfc_enabled_update(bool enabled)
+{
+    nfc_enabled = enabled;
+    Serial.printf("[Main] NFC %s\n", enabled ? "habilitado" : "deshabilitado");
+}
+
+void on_nfc_uid_update(const char* uid)
+{
+    nfc_set_authorized_uid(uid);
+}
+
+void on_max_failed_update(int max)
+{
+    pinpad_set_max_failed_attempts(max);
+}
+
+void on_lockout_duration_update(int seconds)
+{
+    pinpad_set_lockout_duration_ms((uint32_t)seconds * 1000);
+}
+
+// ============================================
+// CALLBACKS THINGSBOARD — RPC
+// ============================================
+
+void on_rpc_unlock_temporary(uint32_t durationMs)
+{
+    do_unlock_temporary(durationMs);
+}
+
+void on_rpc_reset_lockout(void)
+{
+    pinpad_reset_failed_attempts();
+    failed_attempts_count = 0;
+    thingsboard_publish_failed_attempts(0);
+}
+
+// ============================================
+// TIMER NFC
+// ============================================
+
+void nfc_check_timer_cb(lv_timer_t* timer)
+{
+    if (!nfc_enabled)        return;
+    if (screen_busy)         return;
+    if (is_unlocking)        return;
+    if (pinpad_is_locked_out()) return;
 
     NfcTag tag;
+    if (nfc_read_tag(&tag)) {
+        if (nfc_is_authorized(&tag)) {
+            Serial.println("[Main] NFC autorizado");
+            do_unlock("nfc");
+        } else {
+            Serial.println("[Main] NFC rechazado — UID no autorizado");
+            thingsboard_publish_access_event(false, "nfc");
 
-    if (nfc_read_tag(&tag))
-    {
-        is_screen_active = true;
-        is_unlocking = true;
-
-        lock_unlock();
-        thingsboard_publish_lock_state(lock_get_state());
-        display_turn_on();
-
-        unlocked_screen_show(LOCK_AUTO_LOCK_DELAY_MS, on_lock_after_unlock);
-
-        // Resetear flag de unlocking después de un momento
-        is_unlocking = false;
-    }
-}
-
-// ============================================
-// FUNCIONES DE CONEXIÓN WIFI
-// ============================================
-
-/**
- * @brief Conecta a WiFi
- */
-void connect_wifi(void)
-{
-    Serial.println("Conectando a WiFi...");
-    Serial.print("SSID: ");
-    Serial.println(WIFI_SSID);
-    
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30)
-    {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-    }
-    
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        Serial.println("");
-        Serial.print("WiFi conectado! IP: ");
-        Serial.println(WiFi.localIP());
-        Serial.print("Gateway: ");
-        Serial.println(WiFi.gatewayIP());
-        Serial.print("DNS: ");
-        Serial.println(WiFi.dnsIP());
-    }
-    else
-    {
-        Serial.println("");
-        Serial.print("Error WiFi. Estado: ");
-        Serial.println(WiFi.status());
-        // Posibles errores:
-        // 0 = WL_IDLE_STATUS
-        // 1 = WL_NO_SSID_AVAIL
-        // 2 = WL_SCAN_COMPLETED
-        // 3 = WL_CONNECTED
-        // 4 = WL_CONNECT_FAILED
-        // 5 = WL_CONNECTION_LOST
-        // 6 = WL_DISCONNECTED
-        switch(WiFi.status()) {
-            case WL_NO_SSID_AVAIL:
-                Serial.println("Red WiFi no encontrada!");
-                break;
-            case WL_CONNECT_FAILED:
-                Serial.println("Contraseña incorrecta!");
-                break;
-            case WL_CONNECTION_LOST:
-                Serial.println("Conexion perdida!");
-                break;
-            case WL_DISCONNECTED:
-                Serial.println("Desconectado!");
-                break;
+            // Mostrar feedback de rechazo en pinpad si está activo
+            if (lv_scr_act() == screen_pinpad) {
+                pinpad_show_status("Tarjeta no autorizada", COLOR_ERROR);
+            }
         }
     }
 }
 
 // ============================================
-// SETUP Y LOOP
+// WiFi
+// ============================================
+
+void connect_wifi(void)
+{
+    Serial.printf("Conectando a WiFi: %s ...\n", WIFI_SSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+    for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("WiFi conectado! IP: %s\n", WiFi.localIP().toString().c_str());
+    } else {
+        Serial.printf("WiFi fallido (estado %d) — operando sin conexión\n", WiFi.status());
+    }
+}
+
+// ============================================
+// SETUP
 // ============================================
 
 void setup()
 {
     Serial.begin(115200);
     Serial.println("========================================");
-    Serial.println("Sistema de Cerradura Electronica v" FIRMWARE_VERSION);
-    Serial.println("========================================");
-    
-    // 1. Inicializar hardware
-    Serial.println("\n[1/6] Inicializando hardware...");
+    Serial.printf("Cerradura Electronica v%s\n", FIRMWARE_VERSION);
+    Serial.println("========================================\n");
+
+    // 1. Storage NVS
+    Serial.println("[1/7] Storage NVS...");
+    storage_init();
+
+    // 2. Hardware
+    Serial.println("[2/7] Hardware (cerradura)...");
     lock_init();
-    
-    // 2. Inicializar display
-    Serial.println("[2/6] Inicializando display...");
+
+    // 3. Display
+    Serial.println("[3/7] Display...");
     display_init();
-    
-    // 3. Conectar WiFi
-    Serial.println("[3/6] Conectando a red...");
+
+    // 4. WiFi + NTP
+    Serial.println("[4/7] WiFi...");
     connect_wifi();
-    
-    // Debug: Mostrar estado WiFi
-    Serial.print("Estado WiFi: ");
-    Serial.println(WiFi.status());
+
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("IP: ");
-        Serial.println(WiFi.localIP());
-        Serial.print("Gateway: ");
-        Serial.println(WiFi.gatewayIP());
-    }
-    
-    // Configurar timezone y sincronizar hora (solo si hay WiFi)
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("Configurando zona horaria (Republica Dominicana)...");
-        setenv("TZ", "America/Santo_Domingo", 1);
+        // Timezone: República Dominicana (AST, UTC-4, sin DST)
+        setenv("TZ", "AST4", 1);
         tzset();
-        // Usar servidores NTP de Caribe/América Latina
         configTime(-4 * 3600, 0, "pool.ntp.org", "time.google.com");
-        
-        // Sincronizar hora (esperar hasta 5 segundos)
-        Serial.println("Sincronizando hora...");
-        struct tm timeinfo;
-        int retry = 0;
-        while (getLocalTime(&timeinfo) == false && retry < 10) {
-            delay(500);
-            Serial.print(".");
-            retry++;
+
+        struct tm t;
+        Serial.print("Sincronizando NTP");
+        for (int i = 0; i < 10 && !getLocalTime(&t); i++) {
+            delay(500); Serial.print(".");
         }
-        if (getLocalTime(&timeinfo)) {
-            Serial.println("\nHora sincronizada: " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min));
-        } else {
-            Serial.println("\nNo se pudo sincronizar la hora");
+        Serial.println();
+        if (getLocalTime(&t)) {
+            Serial.printf("Hora: %02d:%02d:%02d\n", t.tm_hour, t.tm_min, t.tm_sec);
         }
-    } else {
-        Serial.println("WiFi no conectado - usando hora del sistema");
     }
-    
-    // 4. Inicializar ThingsBoard
-    Serial.println("[4/6] Inicializando ThingsBoard...");
+
+    // 5. ThingsBoard
+    Serial.println("[5/7] ThingsBoard...");
     if (WiFi.status() == WL_CONNECTED) {
         thingsboard_init();
+
+        // Registrar todos los callbacks ANTES de conectar
+        thingsboard_set_state_change_callback(on_remote_state_change);
+        thingsboard_set_pin_update_callback(on_pin_update);
+        thingsboard_set_auto_lock_delay_callback(on_auto_lock_delay_update);
+        thingsboard_set_nfc_enabled_callback(on_nfc_enabled_update);
+        thingsboard_set_nfc_uid_callback(on_nfc_uid_update);
+        thingsboard_set_max_failed_callback(on_max_failed_update);
+        thingsboard_set_lockout_duration_callback(on_lockout_duration_update);
+        thingsboard_set_rpc_unlock_temp_callback(on_rpc_unlock_temporary);
+        thingsboard_set_rpc_reset_lockout_callback(on_rpc_reset_lockout);
+
         thingsboard_connect();
     }
-    
-    // 5. Inicializar LVGL
-    Serial.println("[5/6] Inicializando LVGL...");
+
+    // 6. LVGL
+    Serial.println("[6/7] LVGL + UI...");
     lv_init();
 
-    // Inicializar touch
     Wire.begin(TOUCH_SDA, TOUCH_SCL);
     ts.begin();
     ts.setRotation(TOUCH_ROTATION);
 
-    // Alocar buffers en PSRAM para mejor rendimiento y evitar fragmentación
-    // Buffer size: 1/5 de pantalla para balance entre memoria y velocidad
-    uint32_t buf_size = screenWidth * screenHeight / 5;
-    Serial.print("Alocando buffers en PSRAM: ");
-    Serial.print(buf_size * sizeof(lv_color_t) * 2);
-    Serial.println(" bytes");
+    // Buffers en PSRAM (pantalla 800×480 = 768KB total)
+    uint32_t buf_size = DISPLAY_WIDTH * DISPLAY_HEIGHT / 5;
+    disp_buf1 = (lv_color_t*)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    disp_buf2 = (lv_color_t*)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
 
-    disp_draw_buf1 = (lv_color_t*)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-    disp_draw_buf2 = (lv_color_t*)heap_caps_malloc(buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-
-    if (!disp_draw_buf1 || !disp_draw_buf2) {
-        Serial.println("ERROR: No se pudo alocar buffers en PSRAM!");
-        Serial.println("Intentando usar memoria interna...");
-        // Fallback a memoria interna con buffer más pequeño
-        if (!disp_draw_buf1) disp_draw_buf1 = (lv_color_t*)malloc(buf_size / 4 * sizeof(lv_color_t));
-        if (!disp_draw_buf2) disp_draw_buf2 = (lv_color_t*)malloc(buf_size / 4 * sizeof(lv_color_t));
-        buf_size = buf_size / 4;
+    if (!disp_buf1 || !disp_buf2) {
+        Serial.println("WARN: PSRAM no disponible, usando DRAM (buffer reducido)");
+        buf_size /= 4;
+        if (!disp_buf1) disp_buf1 = (lv_color_t*)malloc(buf_size * sizeof(lv_color_t));
+        if (!disp_buf2) disp_buf2 = (lv_color_t*)malloc(buf_size * sizeof(lv_color_t));
     }
-
-    // Configurar doble buffer para rendering sin bloqueos
-    lv_disp_draw_buf_init(&draw_buf, disp_draw_buf1, disp_draw_buf2, buf_size);
+    lv_disp_draw_buf_init(&draw_buf, disp_buf1, disp_buf2, buf_size);
 
     lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = screenWidth;
-    disp_drv.ver_res = screenHeight;
-    disp_drv.flush_cb = my_disp_flush;
-    disp_drv.draw_buf = &draw_buf;
-    disp_drv.full_refresh = 0;  // Permitir partial refresh para mejor performance
+    disp_drv.hor_res     = DISPLAY_WIDTH;
+    disp_drv.ver_res     = DISPLAY_HEIGHT;
+    disp_drv.flush_cb    = my_disp_flush;
+    disp_drv.draw_buf    = &draw_buf;
+    disp_drv.full_refresh = 0;
     lv_disp_drv_register(&disp_drv);
 
-    Serial.println("Buffers LVGL configurados correctamente");
-    
-    // Configurar input device
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.type    = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = my_touchpad_read;
     lv_indev_drv_register(&indev_drv);
-    
-    // Configurar backlight
+
     display_turn_on();
-    
-    // 6. Crear UI
-    Serial.println("[6/6] Creando interfaz de usuario...");
-    
-    // Inicializar estilos
-    theme_init_styles();
-    
+
     // Crear pantallas
-    screen_welcome = welcome_screen_create();
-    screen_standby = standby_screen_create();
-    screen_pinpad = pinpad_screen_create();
+    theme_init_styles();
+    screen_welcome  = welcome_screen_create();
+    screen_standby  = standby_screen_create();
+    screen_pinpad   = pinpad_screen_create();
     screen_unlocked = unlocked_screen_create();
-    screen_locked = locked_screen_create();
-    screen_error = error_screen_create();
-    
-    // Configurar callback de tap en standby
-    standby_screen_set_tap_callback([]() {
-        display_turn_on();  // Asegurar que el backlight estéendido
-        // Usar pinpad_screen_show para iniciar el timer de inactividad
-        pinpad_screen_show(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0);
-    });
-    
-    // Registrar callbacks
+    screen_locked   = locked_screen_create();
+    screen_error    = error_screen_create();
+
+    // Cargar configuración persistida en el pinpad
+    pinpad_set_correct_pin(storage_get_pin());
+    pinpad_set_max_failed_attempts(storage_get_max_failed_attempts());
+    pinpad_set_lockout_duration_ms((uint32_t)storage_get_lockout_duration() * 1000);
+    current_auto_lock_delay = storage_get_auto_lock_delay();
+    nfc_enabled = storage_get_nfc_enabled();
+
+    // Callbacks del pinpad
     pinpad_set_success_callback(on_pin_success);
     pinpad_set_error_callback(on_pin_error);
-    
-    // Callback de inactividad (volver a standby después de 15 seg sin actividad)
+    pinpad_set_failed_attempts_callback(on_failed_attempts_changed);
     pinpad_set_inactivity_callback([]() {
+        screen_busy = false;
         display_turn_on();
         lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     });
-    
-    // Iniciar animación de bienvenida -> standby
+
+    // Callback tap en standby → abrir pinpad
+    standby_screen_set_tap_callback([]() {
+        display_turn_on();
+        pinpad_screen_show(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0);
+    });
+
+    // Bienvenida → standby
     welcome_screen_animate_to(screen_standby);
-    
-    // Inicializar NFC
+
+    // 7. NFC
+    Serial.println("[7/7] NFC...");
     nfc_init();
-    
-    // Timer para chequear NFC cada segundo
+    // Cargar UID autorizado desde NVS
+    String savedUid = storage_get_nfc_uid();
+    if (savedUid.length() > 0) {
+        nfc_set_authorized_uid(savedUid.c_str());
+    }
+    // Timer NFC cada 1 segundo
     nfc_timer = lv_timer_create(nfc_check_timer_cb, NFC_CHECK_INTERVAL_MS, NULL);
-    
+
     Serial.println("\n========================================");
-    Serial.println("Sistema iniciado correctamente!");
-    Serial.println("PIN correcto: " DEFAULT_PIN);
+    Serial.printf("Sistema listo! PIN: %s | NFC: %s\n",
+                  storage_get_pin().c_str(),
+                  nfc_enabled ? "habilitado" : "deshabilitado");
+    Serial.println("ThingsBoard shared attrs: lockState, correctPin,");
+    Serial.println("  autoLockDelay, nfcEnabled, authorizedNfcUid,");
+    Serial.println("  maxFailedAttempts, lockoutDuration");
+    Serial.println("ThingsBoard RPC: lock, unlock, unlockTemporary, resetLockout");
     Serial.println("========================================\n");
 }
 
+// ============================================
+// LOOP
+// ============================================
+
 void loop()
 {
-    // CRITICAL: Verificar memoria disponible para evitar crash
-    static uint32_t last_mem_check = 0;
-    if (millis() - last_mem_check > 5000) {  // Check cada 5 segundos
-        uint32_t free_heap = ESP.getFreeHeap();
-        if (free_heap < 10000) {  // Menos de 10KB libre = PELIGRO
-            Serial.print("WARNING: Low memory! Free heap: ");
-            Serial.println(free_heap);
-            // Resetear flags para intentar recuperar
-            is_screen_active = false;
+    // ── LVGL (máxima prioridad) ─────────────────────────────
+    uint32_t next = lv_timer_handler();
+
+    // ── ThingsBoard ──────────────────────────────────────────
+    static uint32_t last_tb = 0;
+    if (WiFi.status() == WL_CONNECTED && millis() - last_tb > 50) {
+        thingsboard_loop();
+        last_tb = millis();
+    }
+
+    // ── Actualizar indicadores de estado en standby ──────────
+    static uint32_t last_status = 0;
+    if (millis() - last_status > 2000) {
+        bool wifiOk = (WiFi.status() == WL_CONNECTED);
+        bool tbOk   = thingsboard_is_connected();
+        standby_screen_update_status(wifiOk, tbOk);
+        last_status = millis();
+    }
+
+    // ── Watchdog de memoria ──────────────────────────────────
+    static uint32_t last_mem = 0;
+    if (millis() - last_mem > 10000) {
+        uint32_t free = ESP.getFreeHeap();
+        Serial.printf("[Heap] Libre: %u bytes\n", free);
+        if (free < 8000) {
+            Serial.println("WARN: memoria baja — reseteando flags");
+            screen_busy  = false;
             is_unlocking = false;
         }
-        last_mem_check = millis();
+        last_mem = millis();
     }
 
-    // OPTIMIZACIÓN: Procesar LVGL con máxima prioridad
-    // lv_timer_handler() retorna tiempo hasta el próximo timer
-    uint32_t time_till_next = lv_timer_handler();
-
-    // Procesar ThingsBoard solo si hay conexión (menos frecuente que LVGL)
-    static uint32_t last_tb_check = 0;
-    if (WiFi.status() == WL_CONNECTED && (millis() - last_tb_check > 100))
-    {
-        thingsboard_loop();
-        last_tb_check = millis();
-    }
-
-    // Delay adaptativo basado en el próximo evento LVGL
-    // Esto minimiza latencia mientras permite que otras tareas funcionen
-    if (time_till_next > 5) {
-        delay(2);  // Delay mínimo para no saturar el CPU
-    }
-
-    // Watchdog - resetear si hay un watchdog habilitado
-    yield();  // Dar tiempo a otras tareas del sistema
+    // ── Delay adaptativo ────────────────────────────────────
+    if (next > 5) delay(2);
+    yield();
 }

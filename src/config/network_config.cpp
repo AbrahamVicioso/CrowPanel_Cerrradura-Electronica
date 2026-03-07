@@ -16,10 +16,21 @@ const uint16_t THINGSBOARD_PORT = 1883;
 // Device Access Token
 const char* THINGSBOARD_ACCESS_TOKEN = "mdxequOULBUCtzgcEoyy";
 
-// Shared attribute name for lock state
-const char* LOCK_STATE_ATTRIBUTE = "lockState";
+// ============================================
+// ATRIBUTOS COMPARTIDOS ThingsBoard
+// ============================================
+const char* ATTR_LOCK_STATE        = "lockState";
+const char* ATTR_CORRECT_PIN       = "correctPin";
+const char* ATTR_AUTO_LOCK_DELAY   = "autoLockDelay";
+const char* ATTR_NFC_ENABLED       = "nfcEnabled";
+const char* ATTR_NFC_UID           = "authorizedNfcUid";
+const char* ATTR_MAX_FAILED        = "maxFailedAttempts";
+const char* ATTR_LOCKOUT_DURATION  = "lockoutDuration";
+
+// Alias de compatibilidad
+const char* LOCK_STATE_ATTRIBUTE   = "lockState";
 
 // MQTT Topics
 const char* TB_ATTRIBUTES_TOPIC = "v1/devices/me/attributes";
-const char* TB_TELEMETRY_TOPIC = "v1/devices/me/telemetry";
-const char* TB_RPC_TOPIC = "v1/devices/me/rpc/request/+";
+const char* TB_TELEMETRY_TOPIC  = "v1/devices/me/telemetry";
+const char* TB_RPC_TOPIC        = "v1/devices/me/rpc/request/+";

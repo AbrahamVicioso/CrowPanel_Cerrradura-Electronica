@@ -15,6 +15,7 @@
 
 #include "standby_screen.h"
 #include "../theme.h"
+#include "../../config/config.h"
 #include "../../hardware/display.h"
 #include <time.h>
 
@@ -26,6 +27,11 @@ static lv_obj_t* label_hours     = nullptr;
 static lv_obj_t* label_colon     = nullptr;
 static lv_obj_t* label_mins      = nullptr;
 static lv_obj_t* label_date      = nullptr;
+
+// Indicadores de estado de conectividad
+static lv_obj_t* dot_wifi        = nullptr;  // punto WiFi
+static lv_obj_t* dot_tb          = nullptr;  // punto ThingsBoard
+static lv_obj_t* lbl_wifi_status = nullptr;  // texto "WIFI" / "TB"
 
 static void (*tap_callback)(void) = nullptr;
 static lv_timer_t* clock_timer   = nullptr;
@@ -156,34 +162,45 @@ lv_obj_t* standby_screen_create(void)
     create_line(standby_screen, 766, 463, 18,  1, C_CORNER, LV_OPA_60);
     create_line(standby_screen, 783, 446,  1, 18, C_CORNER, LV_OPA_60);
 
-    // ── Barra superior: puntos de estado + label WiFi ──
-    // Puntos izquierda (estado activo = azul)
-    // OPTIMIZACIÓN: Sin sombras para reducir carga de renderizado
-    lv_obj_t* dot_on = lv_obj_create(standby_screen);
-    lv_obj_set_size(dot_on, 6, 6);
-    lv_obj_set_pos(dot_on, 40, 24);
-    lv_obj_set_style_bg_color(dot_on, lv_color_hex(C_STATUS_ON), 0);
-    lv_obj_set_style_radius(dot_on, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(dot_on, 0, 0);
-    lv_obj_clear_flag(dot_on, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    // ── Barra superior: indicadores de conectividad ──────────
+    // Dot WiFi
+    dot_wifi = lv_obj_create(standby_screen);
+    lv_obj_set_size(dot_wifi, 8, 8);
+    lv_obj_set_pos(dot_wifi, 36, 23);
+    lv_obj_set_style_bg_color(dot_wifi, lv_color_hex(C_STATUS_OFF), 0);
+    lv_obj_set_style_radius(dot_wifi, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(dot_wifi, 0, 0);
+    lv_obj_clear_flag(dot_wifi, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    for (int i = 1; i <= 2; i++) {
-        lv_obj_t* dot = lv_obj_create(standby_screen);
-        lv_obj_set_size(dot, 6, 6);
-        lv_obj_set_pos(dot, 40 + i * 14, 24);
-        lv_obj_set_style_bg_color(dot, lv_color_hex(C_STATUS_OFF), 0);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_border_width(dot, 0, 0);
-        lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    }
+    // Label "WiFi"
+    lv_obj_t* lbl_w = lv_label_create(standby_screen);
+    lv_label_set_text(lbl_w, "WiFi");
+    lv_obj_set_style_text_font(lbl_w, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_w, lv_color_hex(C_HINT), 0);
+    lv_obj_set_pos(lbl_w, 50, 21);
 
-    // Label "WIFI" derecha
-    lv_obj_t* lbl_wifi = lv_label_create(standby_screen);
-    lv_label_set_text(lbl_wifi, "WIFI");
-    lv_obj_set_style_text_font(lbl_wifi, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_wifi, lv_color_hex(C_HINT), 0);
-    lv_obj_set_style_text_letter_space(lbl_wifi, 4, 0);
-    lv_obj_set_pos(lbl_wifi, 726, 20);
+    // Dot ThingsBoard
+    dot_tb = lv_obj_create(standby_screen);
+    lv_obj_set_size(dot_tb, 8, 8);
+    lv_obj_set_pos(dot_tb, 100, 23);
+    lv_obj_set_style_bg_color(dot_tb, lv_color_hex(C_STATUS_OFF), 0);
+    lv_obj_set_style_radius(dot_tb, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(dot_tb, 0, 0);
+    lv_obj_clear_flag(dot_tb, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    // Label "TB"
+    lv_obj_t* lbl_tb = lv_label_create(standby_screen);
+    lv_label_set_text(lbl_tb, "TB");
+    lv_obj_set_style_text_font(lbl_tb, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_tb, lv_color_hex(C_HINT), 0);
+    lv_obj_set_pos(lbl_tb, 114, 21);
+
+    // Label versión firmware
+    lbl_wifi_status = lv_label_create(standby_screen);
+    lv_label_set_text(lbl_wifi_status, "v" FIRMWARE_VERSION);
+    lv_obj_set_style_text_font(lbl_wifi_status, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_wifi_status, lv_color_hex(C_HINT), 0);
+    lv_obj_set_pos(lbl_wifi_status, 706, 21);
 
     // ── HORA — encadenado con lv_obj_align_to ────────────
     //
@@ -299,4 +316,19 @@ void standby_screen_update_time(void)
 void standby_screen_set_tap_callback(void (*callback)(void))
 {
     tap_callback = callback;
+}
+
+/**
+ * @brief Actualiza los puntos indicadores de WiFi y ThingsBoard
+ */
+void standby_screen_update_status(bool wifiOk, bool tbOk)
+{
+    if (dot_wifi) {
+        lv_obj_set_style_bg_color(dot_wifi,
+            lv_color_hex(wifiOk ? C_STATUS_ON : C_STATUS_OFF), 0);
+    }
+    if (dot_tb) {
+        lv_obj_set_style_bg_color(dot_tb,
+            lv_color_hex(tbOk ? C_STATUS_ON : C_STATUS_OFF), 0);
+    }
 }

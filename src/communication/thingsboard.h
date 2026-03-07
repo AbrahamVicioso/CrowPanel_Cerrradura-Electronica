@@ -1,54 +1,116 @@
 /**
  * @file thingsboard.h
- * @brief Módulo de comunicación con ThingsBoard
+ * @brief Módulo ThingsBoard — shared attributes, RPC, telemetría
+ *
+ * Atributos compartidos recibidos (TB Dashboard → Dispositivo):
+ *   lockState          "locked"/"unlocked"
+ *   correctPin         "XXXXXX"
+ *   autoLockDelay      ms (entero)
+ *   nfcEnabled         bool
+ *   authorizedNfcUid   "AA:BB:CC:DD"
+ *   maxFailedAttempts  entero
+ *   lockoutDuration    segundos
+ *
+ * Comandos RPC recibidos (TB Dashboard → Dispositivo):
+ *   lock               → bloquear
+ *   unlock             → desbloquear
+ *   unlockTemporary    → desbloquear N ms  { "duration": 5000 }
+ *   resetLockout       → limpiar bloqueo de intentos
+ *
+ * Telemetría enviada (Dispositivo → TB):
+ *   locked             bool
+ *   accessGranted      bool
+ *   accessMethod       "pin" / "nfc" / "remote" / "rpc"
+ *   failedAttempts     int
+ *   uptime             ms
+ *
+ * Atributos de cliente (Dispositivo → TB, solo al conectar):
+ *   firmwareVersion, ipAddress, macAddress
  */
 
 #ifndef THINGSBOARD_H
 #define THINGSBOARD_H
 
 #include <WiFi.h>
-#include <PubSubClient.h>
 #include <ThingsBoard.h>
 #include <Arduino_MQTT_Client.h>
 #include "../hardware/lock.h"
 
-/**
- * @brief Inicializa el módulo de comunicación
- */
+// ============================================
+// TIPOS DE CALLBACK
+// ============================================
+
+/** Estado remoto cambiado (lockState attribute) */
+typedef void (*RemoteStateCallback)(bool locked);
+
+/** PIN cambiado desde TB */
+typedef void (*PinUpdateCallback)(const char* newPin);
+
+/** Delay auto-bloqueo cambiado */
+typedef void (*AutoLockDelayCallback)(uint32_t delayMs);
+
+/** NFC habilitado/deshabilitado desde TB */
+typedef void (*NfcEnabledCallback)(bool enabled);
+
+/** UID NFC autorizado cambiado */
+typedef void (*NfcUidCallback)(const char* uid);
+
+/** Máximo intentos fallidos cambiado */
+typedef void (*MaxFailedCallback)(int maxAttempts);
+
+/** Duración lockout cambiada */
+typedef void (*LockoutDurationCallback)(int seconds);
+
+/** RPC unlockTemporary recibido */
+typedef void (*RpcUnlockTempCallback)(uint32_t durationMs);
+
+/** RPC resetLockout recibido */
+typedef void (*RpcResetLockoutCallback)(void);
+
+// ============================================
+// FUNCIONES PÚBLICAS — CICLO DE VIDA
+// ============================================
+
 void thingsboard_init(void);
-
-/**
- * @brief Conecta al servidor ThingsBoard
- * @return true si la conexión fue exitosa
- */
 bool thingsboard_connect(void);
-
-/**
- * @brief Desconecta del servidor ThingsBoard
- */
 void thingsboard_disconnect(void);
-
-/**
- * @brief Procesa el loop de ThingsBoard (debe llamarse en el loop principal)
- */
 void thingsboard_loop(void);
+void thingsboard_reconnect(void);
+bool thingsboard_is_connected(void);
 
-/**
- * @brief Publica el estado de la cerradura
- * @param state Estado actual de la cerradura
- * @return true si se publicó correctamente
- */
+// ============================================
+// FUNCIONES PÚBLICAS — PUBLICACIÓN
+// ============================================
+
+/** Publica estado de cerradura como telemetría + atributo cliente */
 bool thingsboard_publish_lock_state(LockState state);
 
 /**
- * @brief Verifica si está conectado a ThingsBoard
- * @return true si está conectado
+ * @brief Registra un evento de acceso en ThingsBoard
+ * @param granted  true si fue exitoso
+ * @param method   "pin", "nfc", "remote", "rpc"
  */
-bool thingsboard_is_connected(void);
+bool thingsboard_publish_access_event(bool granted, const char* method);
 
-/**
- * @brief Intenta reconectar si hay conexión perdida
- */
-void thingsboard_reconnect(void);
+/** Publica intentos fallidos actuales */
+bool thingsboard_publish_failed_attempts(int count);
+
+/** Publica atributos de cliente (firmware, IP, MAC) */
+bool thingsboard_publish_client_attributes(void);
+
+// ============================================
+// FUNCIONES PÚBLICAS — REGISTRO DE CALLBACKS
+// ============================================
+
+void thingsboard_set_state_change_callback(RemoteStateCallback cb);
+void thingsboard_set_pin_update_callback(PinUpdateCallback cb);
+void thingsboard_set_auto_lock_delay_callback(AutoLockDelayCallback cb);
+void thingsboard_set_nfc_enabled_callback(NfcEnabledCallback cb);
+void thingsboard_set_nfc_uid_callback(NfcUidCallback cb);
+void thingsboard_set_max_failed_callback(MaxFailedCallback cb);
+void thingsboard_set_lockout_duration_callback(LockoutDurationCallback cb);
+void thingsboard_set_rpc_unlock_temp_callback(RpcUnlockTempCallback cb);
+void thingsboard_set_rpc_reset_lockout_callback(RpcResetLockoutCallback cb);
+
 
 #endif // THINGSBOARD_H

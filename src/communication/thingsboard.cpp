@@ -1,109 +1,196 @@
 /**
  * @file thingsboard.cpp
- * @brief Implementación del módulo de comunicación con ThingsBoard
+ * @brief Implementación del módulo ThingsBoard
+ *
+ * Características:
+ *  - 7 shared attributes suscritos en una sola suscripción
+ *  - 4 RPC server-side: lock, unlock, unlockTemporary, resetLockout
+ *  - Telemetría: locked, accessGranted, accessMethod, failedAttempts, uptime
+ *  - Atributos cliente al conectar: firmwareVersion, ipAddress, macAddress
+ *  - Re-solicitud de shared attributes al reconectar
  */
 
 #include "thingsboard.h"
 #include "../config/network_config.h"
 #include "../config/config.h"
+#include "../config/storage.h"
 #include "../hardware/lock.h"
 
+#include <Shared_Attribute_Update.h>
+#include <Server_Side_RPC.h>
+
 // ============================================
-// VARIABLES PRIVADAS
+// INSTANCIAS MQTT / TB
 // ============================================
 
-// WiFi and MQTT clients
-static WiFiClient wifiClient;
+static WiFiClient    wifiClient;
 static Arduino_MQTT_Client mqttClient(wifiClient);
-static ThingsBoard tb(mqttClient);
 
-// Connection status
-static bool tbConnected = false;
-static unsigned long lastConnectAttempt = 0;
+// Shared attributes: 1 suscripción, máx 7 atributos
+static Shared_Attribute_Update<1U, 7U> sharedAttrUpdate;
+
+// Server-side RPC: máx 4 callbacks, respuesta con hasta 2 pares clave-valor
+static Server_Side_RPC<4U, 2U> serverSideRPC;
+
+static const std::array<IAPI_Implementation*, 2U> apis = {
+    &sharedAttrUpdate,
+    &serverSideRPC
+};
+
+// Buffer de envío 256 bytes, recepción 512 bytes
+static ThingsBoardSized<64> tb(mqttClient, 256, 512, Default_Max_Stack_Size, apis);
 
 // ============================================
-// CALLBACKS MQTT
+// ESTADO INTERNO
+// ============================================
+
+static bool     tbConnected               = false;
+static uint32_t lastConnectAttempt        = 0;
+static bool     isProcessingRemoteChange  = false;
+
+// ============================================
+// CALLBACKS REGISTRADOS EXTERNAMENTE
+// ============================================
+
+static RemoteStateCallback      stateChangeCb       = nullptr;
+static PinUpdateCallback        pinUpdateCb         = nullptr;
+static AutoLockDelayCallback    autoLockDelayCb     = nullptr;
+static NfcEnabledCallback       nfcEnabledCb        = nullptr;
+static NfcUidCallback           nfcUidCb            = nullptr;
+static MaxFailedCallback        maxFailedCb         = nullptr;
+static LockoutDurationCallback  lockoutDurationCb   = nullptr;
+static RpcUnlockTempCallback    rpcUnlockTempCb     = nullptr;
+static RpcResetLockoutCallback  rpcResetLockoutCb   = nullptr;
+
+// ============================================
+// CALLBACK ATRIBUTOS COMPARTIDOS
 // ============================================
 
 /**
- * @brief Callback para mensajes MQTT recibidos
+ * @brief Procesa todos los shared attributes recibidos desde el dashboard.
+ *        Un solo callback cubre los 7 atributos configurados.
  */
-static void mqttCallback(char* topic, byte* payload, unsigned int length)
+static void processSharedAttributes(const JsonObjectConst& data)
 {
-    // Serial.print("Mensaje recibido en topic: ");
-    // Serial.println(topic);
-    
-    // Parse RPC topic: v1/devices/me/rpc/request/{id}
-    // Usar comparación más eficiente
-    if (length < 5) return;  // Early exit para mensajes muy cortos
-    
-    // Quick check for rpc/request/ - evitar String allocation si no es necesario
-    bool isRpcRequest = false;
-    for (unsigned int i = 0; i < length - 12 && i < 50; i++) {
-        if (topic[i] == 'r' && topic[i+1] == 'p' && topic[i+2] == 'c' && 
-            topic[i+3] == '/' && topic[i+4] == 'r' && topic[i+5] == 'e' &&
-            topic[i+6] == 'q' && topic[i+7] == 'u' && topic[i+8] == 'e' &&
-            topic[i+9] == 's' && topic[i+10] == 't' && topic[i+11] == '/') {
-            isRpcRequest = true;
-            break;
+    Serial.println("[TB] Shared attributes recibidos:");
+
+    // ── lockState ────────────────────────────────────────────
+    if (data.containsKey(ATTR_LOCK_STATE)) {
+        const char* val = data[ATTR_LOCK_STATE];
+        bool shouldLock = (strcmp(val, "locked") == 0);
+        Serial.printf("  lockState = %s\n", val);
+
+        if (!isProcessingRemoteChange && stateChangeCb) {
+            isProcessingRemoteChange = true;
+            stateChangeCb(shouldLock);
+            isProcessingRemoteChange = false;
         }
     }
-    
-    if (!isRpcRequest) return;
-    
-    // Parse JSON payload
-    char message[128];  // Buffer en stack en lugar de heap
-    unsigned int copyLen = (length < 127) ? length : 127;
-    memcpy(message, payload, copyLen);
-    message[copyLen] = '\0';
-    
-    // Serial.print("Payload: ");
-    // Serial.println(message);
-    
-    // Buscar method en JSON - búsqueda simple
-    char* methodPos = strstr(message, "\"method\"");
-    if (!methodPos) methodPos = strstr(message, "\"methodName\"");
-    
-    if (methodPos != nullptr)
-    {
-        // Encontrar nombre del método
-        char* nameStart = strchr(methodPos, ':');
-        if (nameStart != nullptr) {
-            nameStart += 2;  // Saltar ": y espacio
-            char* nameEnd = strchr(nameStart, '"');
-            
-            if (nameEnd != nullptr && (nameEnd - nameStart) < 20) {
-                char methodName[21];
-                int nameLen = nameEnd - nameStart;
-                strncpy(methodName, nameStart, nameLen);
-                methodName[nameLen] = '\0';
-                
-                // Handle commands
-                if (strcmp(methodName, "unlockDoor") == 0 || 
-                    strcmp(methodName, "unlock") == 0 || 
-                    strcmp(methodName, "setLockState") == 0)
-                {
-                    // Check for state parameter
-                    bool unlock = true;
-                    if (strstr(message, "\"state\":false") != nullptr || 
-                        strstr(message, "\"state\": false") != nullptr) {
-                        unlock = false;
-                    }
-                    
-                    if (unlock) {
-                        lock_unlock();
-                    } else {
-                        lock_lock();
-                    }
-                }
-                else if (strcmp(methodName, "lockDoor") == 0 || 
-                         strcmp(methodName, "lock") == 0)
-                {
-                    lock_lock();
-                }
-            }
-        }
+
+    // ── correctPin ───────────────────────────────────────────
+    if (data.containsKey(ATTR_CORRECT_PIN)) {
+        const char* pin = data[ATTR_CORRECT_PIN];
+        Serial.printf("  correctPin = %s\n", pin);
+        storage_set_pin(pin);
+        if (pinUpdateCb) pinUpdateCb(pin);
     }
+
+    // ── autoLockDelay ────────────────────────────────────────
+    if (data.containsKey(ATTR_AUTO_LOCK_DELAY)) {
+        uint32_t delayMs = data[ATTR_AUTO_LOCK_DELAY].as<uint32_t>();
+        // Clampar a límites seguros
+        if (delayMs < LOCK_AUTO_LOCK_DELAY_MIN) delayMs = LOCK_AUTO_LOCK_DELAY_MIN;
+        if (delayMs > LOCK_AUTO_LOCK_DELAY_MAX) delayMs = LOCK_AUTO_LOCK_DELAY_MAX;
+        Serial.printf("  autoLockDelay = %u ms\n", delayMs);
+        storage_set_auto_lock_delay(delayMs);
+        if (autoLockDelayCb) autoLockDelayCb(delayMs);
+    }
+
+    // ── nfcEnabled ───────────────────────────────────────────
+    if (data.containsKey(ATTR_NFC_ENABLED)) {
+        bool enabled = data[ATTR_NFC_ENABLED].as<bool>();
+        Serial.printf("  nfcEnabled = %s\n", enabled ? "true" : "false");
+        storage_set_nfc_enabled(enabled);
+        if (nfcEnabledCb) nfcEnabledCb(enabled);
+    }
+
+    // ── authorizedNfcUid ─────────────────────────────────────
+    if (data.containsKey(ATTR_NFC_UID)) {
+        const char* uid = data[ATTR_NFC_UID];
+        Serial.printf("  authorizedNfcUid = %s\n", uid);
+        storage_set_nfc_uid(uid);
+        if (nfcUidCb) nfcUidCb(uid);
+    }
+
+    // ── maxFailedAttempts ────────────────────────────────────
+    if (data.containsKey(ATTR_MAX_FAILED)) {
+        int maxFailed = data[ATTR_MAX_FAILED].as<int>();
+        if (maxFailed < 1) maxFailed = 1;
+        if (maxFailed > 10) maxFailed = 10;
+        Serial.printf("  maxFailedAttempts = %d\n", maxFailed);
+        storage_set_max_failed_attempts(maxFailed);
+        if (maxFailedCb) maxFailedCb(maxFailed);
+    }
+
+    // ── lockoutDuration ──────────────────────────────────────
+    if (data.containsKey(ATTR_LOCKOUT_DURATION)) {
+        int seconds = data[ATTR_LOCKOUT_DURATION].as<int>();
+        if (seconds < LOCKOUT_DURATION_MIN_S) seconds = LOCKOUT_DURATION_MIN_S;
+        if (seconds > LOCKOUT_DURATION_MAX_S) seconds = LOCKOUT_DURATION_MAX_S;
+        Serial.printf("  lockoutDuration = %d s\n", seconds);
+        storage_set_lockout_duration(seconds);
+        if (lockoutDurationCb) lockoutDurationCb(seconds);
+    }
+}
+
+// ============================================
+// CALLBACKS RPC
+// Firma correcta del SDK 0.15.0:
+//   void callback(JsonVariantConst const& params, JsonDocument& response)
+// ============================================
+
+static void on_rpc_lock(JsonVariantConst const& data, JsonDocument& response)
+{
+    Serial.println("[TB] RPC: lock");
+    if (!isProcessingRemoteChange && stateChangeCb) {
+        isProcessingRemoteChange = true;
+        stateChangeCb(true);
+        isProcessingRemoteChange = false;
+    }
+    response["result"] = "locked";
+}
+
+static void on_rpc_unlock(JsonVariantConst const& data, JsonDocument& response)
+{
+    Serial.println("[TB] RPC: unlock");
+    if (!isProcessingRemoteChange && stateChangeCb) {
+        isProcessingRemoteChange = true;
+        stateChangeCb(false);
+        isProcessingRemoteChange = false;
+    }
+    response["result"] = "unlocked";
+}
+
+static void on_rpc_unlock_temporary(JsonVariantConst const& data, JsonDocument& response)
+{
+    uint32_t duration = 5000;
+    if (!data.isNull() && data.containsKey("duration")) {
+        duration = data["duration"].as<uint32_t>();
+    }
+    // Clampar: mínimo 1s, máximo 5 min
+    if (duration < 1000)   duration = 1000;
+    if (duration > 300000) duration = 300000;
+
+    Serial.printf("[TB] RPC: unlockTemporary %u ms\n", duration);
+    if (rpcUnlockTempCb) rpcUnlockTempCb(duration);
+    response["result"] = duration;
+}
+
+static void on_rpc_reset_lockout(JsonVariantConst const& data, JsonDocument& response)
+{
+    Serial.println("[TB] RPC: resetLockout");
+    if (rpcResetLockoutCb) rpcResetLockoutCb();
+    response["result"] = "ok";
 }
 
 // ============================================
@@ -112,48 +199,66 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length)
 
 void thingsboard_init(void)
 {
-    // Configurar callback MQTT
-    // Nota: ThingsBoard maneja esto internamente
-    
-    Serial.println("Módulo ThingsBoard inicializado");
+    Serial.println("[TB] Módulo ThingsBoard v2 inicializado");
 }
 
 bool thingsboard_connect(void)
 {
-    // Check WiFi status
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        Serial.println("ThingsBoard: WiFi no conectado");
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("[TB] WiFi no conectado");
         return false;
     }
+    if (tb.connected()) return true;
 
-    if (tb.connected())
-    {
-        return true;
-    }
+    Serial.printf("[TB] Conectando a %s:%d ...\n", THINGSBOARD_SERVER, THINGSBOARD_PORT);
 
-    Serial.print("Conectando a ThingsBoard ");
-    Serial.print(THINGSBOARD_SERVER);
-    Serial.print(":");
-    Serial.println(THINGSBOARD_PORT);
-    
-    // Connect to ThingsBoard
-    if (tb.connect(THINGSBOARD_SERVER, THINGSBOARD_ACCESS_TOKEN, THINGSBOARD_PORT))
-    {
-        Serial.println("Conectado a ThingsBoard!");
-        
-        // Publicar estado inicial
-        thingsboard_publish_lock_state(lock_get_state());
-        
-        tbConnected = true;
-        return true;
-    }
-    else
-    {
-        Serial.println("Error de conexión ThingsBoard - intentar mas tarde");
+    if (!tb.connect(THINGSBOARD_SERVER, THINGSBOARD_ACCESS_TOKEN, THINGSBOARD_PORT)) {
+        Serial.println("[TB] Error de conexión");
         tbConnected = false;
         return false;
     }
+
+    Serial.println("[TB] Conectado!");
+    tbConnected = true;
+
+    // ── Suscribir a los 7 shared attributes ───────────────
+    const std::array<const char*, 7U> attrs = {{
+        ATTR_LOCK_STATE,
+        ATTR_CORRECT_PIN,
+        ATTR_AUTO_LOCK_DELAY,
+        ATTR_NFC_ENABLED,
+        ATTR_NFC_UID,
+        ATTR_MAX_FAILED,
+        ATTR_LOCKOUT_DURATION
+    }};
+    Shared_Attribute_Callback<7U> attrCb(processSharedAttributes,
+                                          attrs.cbegin(), attrs.cend());
+    if (!sharedAttrUpdate.Shared_Attributes_Subscribe(attrCb)) {
+        Serial.println("[TB] ERROR: No se pudo suscribir a shared attributes");
+    } else {
+        Serial.println("[TB] Suscrito a 7 shared attributes");
+    }
+
+    // ── Suscribir a RPC ───────────────────────────────────
+    const std::array<RPC_Callback, 4U> rpcCbs = {{
+        RPC_Callback{ "lock",            on_rpc_lock             },
+        RPC_Callback{ "unlock",          on_rpc_unlock           },
+        RPC_Callback{ "unlockTemporary", on_rpc_unlock_temporary },
+        RPC_Callback{ "resetLockout",    on_rpc_reset_lockout    }
+    }};
+    if (!serverSideRPC.RPC_Subscribe(rpcCbs.cbegin(), rpcCbs.cend())) {
+        Serial.println("[TB] ERROR: No se pudo suscribir a RPC");
+    } else {
+        Serial.println("[TB] Suscrito a 4 métodos RPC");
+    }
+
+    // ── Publicar atributos de cliente ─────────────────────
+    thingsboard_publish_client_attributes();
+
+    // ── Publicar estado inicial ───────────────────────────
+    thingsboard_publish_lock_state(lock_get_state());
+
+    return true;
 }
 
 void thingsboard_disconnect(void)
@@ -161,48 +266,19 @@ void thingsboard_disconnect(void)
     if (tb.connected()) {
         tb.disconnect();
         tbConnected = false;
+        Serial.println("[TB] Desconectado");
     }
 }
 
 void thingsboard_loop(void)
 {
-    // Solo procesar si hay WiFi conectado
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        // Intentar reconectar si es necesario
-        if (!tb.connected())
-        {
-            thingsboard_reconnect();
-        }
-        
-        // Procesar mensajes MQTT - solo si está conectado
-        if (tb.connected()) {
-            tb.loop();
-        }
-    }
-}
+    if (WiFi.status() != WL_CONNECTED) return;
 
-bool thingsboard_publish_lock_state(LockState state)
-{
-    if (!tb.connected())
-    {
-        return false;
+    if (!tb.connected()) {
+        thingsboard_reconnect();
+        return;
     }
-
-    // Send shared attribute
-    const char* value = (state == LockState::UNLOCKED) ? "unlocked" : "locked";
-    
-    if (tb.sendAttributeData(LOCK_STATE_ATTRIBUTE, value))
-    {
-        Serial.print("Estado de cerradura publicado: ");
-        Serial.println(value);
-        return true;
-    }
-    else
-    {
-        Serial.println("Error al publicar estado de cerradura");
-        return false;
-    }
+    tb.loop();
 }
 
 bool thingsboard_is_connected(void)
@@ -212,25 +288,79 @@ bool thingsboard_is_connected(void)
 
 void thingsboard_reconnect(void)
 {
-    unsigned long currentMillis = millis();
-    
-    // Reconnect to WiFi if needed
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        // Intentar reconectar WiFi silenciosamente (sin muchos Serial)
-        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        delay(100);  // Reducido de 500ms
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.begin();
         return;
     }
-    
-    // Reconnect to ThingBoard if needed
-    if (!tb.connected())
-    {
-        if (currentMillis - lastConnectAttempt >= THINGSBOARD_RECONNECT_INTERVAL_MS)
-        {
-            lastConnectAttempt = currentMillis;
-            thingsboard_connect();
-        }
-        tb.loop();
+    uint32_t now = millis();
+    if (now - lastConnectAttempt >= THINGSBOARD_RECONNECT_INTERVAL_MS) {
+        lastConnectAttempt = now;
+        Serial.println("[TB] Intentando reconectar...");
+        thingsboard_connect();
     }
 }
+
+// ── Publicación ──────────────────────────────────────────────
+
+bool thingsboard_publish_lock_state(LockState state)
+{
+    if (!tb.connected()) return false;
+    if (isProcessingRemoteChange) return true;  // evitar loop
+
+    bool locked = (state == LockState::LOCKED);
+    const char* stateStr = locked ? "locked" : "unlocked";
+
+    // Telemetría (serie temporal)
+    bool ok = tb.sendTelemetryData("locked", locked);
+    // Atributo cliente (estado actual)
+    ok |= tb.sendAttributeData(ATTR_LOCK_STATE, stateStr);
+
+    Serial.printf("[TB] Estado publicado: %s\n", stateStr);
+    return ok;
+}
+
+bool thingsboard_publish_access_event(bool granted, const char* method)
+{
+    if (!tb.connected()) return false;
+
+    bool ok = true;
+    ok &= tb.sendTelemetryData("accessGranted", granted);
+    ok &= tb.sendTelemetryData("accessMethod",  method);
+
+    Serial.printf("[TB] Evento: %s via %s\n",
+                  granted ? "ACCESO OK" : "DENEGADO", method);
+    return ok;
+}
+
+bool thingsboard_publish_failed_attempts(int count)
+{
+    if (!tb.connected()) return false;
+    return tb.sendTelemetryData("failedAttempts", count);
+}
+
+bool thingsboard_publish_client_attributes(void)
+{
+    if (!tb.connected()) return false;
+
+    bool ok = true;
+    ok &= tb.sendAttributeData("firmwareVersion", FIRMWARE_VERSION);
+    ok &= tb.sendAttributeData("ipAddress",       WiFi.localIP().toString().c_str());
+    ok &= tb.sendAttributeData("macAddress",      WiFi.macAddress().c_str());
+    ok &= tb.sendTelemetryData("uptime",          (long)millis());
+
+    Serial.printf("[TB] Atributos cliente publicados (IP: %s)\n",
+                  WiFi.localIP().toString().c_str());
+    return ok;
+}
+
+// ── Registro de callbacks ────────────────────────────────────
+
+void thingsboard_set_state_change_callback(RemoteStateCallback cb)   { stateChangeCb     = cb; }
+void thingsboard_set_pin_update_callback(PinUpdateCallback cb)        { pinUpdateCb       = cb; }
+void thingsboard_set_auto_lock_delay_callback(AutoLockDelayCallback cb){ autoLockDelayCb  = cb; }
+void thingsboard_set_nfc_enabled_callback(NfcEnabledCallback cb)      { nfcEnabledCb     = cb; }
+void thingsboard_set_nfc_uid_callback(NfcUidCallback cb)              { nfcUidCb         = cb; }
+void thingsboard_set_max_failed_callback(MaxFailedCallback cb)         { maxFailedCb      = cb; }
+void thingsboard_set_lockout_duration_callback(LockoutDurationCallback cb){ lockoutDurationCb = cb; }
+void thingsboard_set_rpc_unlock_temp_callback(RpcUnlockTempCallback cb){ rpcUnlockTempCb = cb; }
+void thingsboard_set_rpc_reset_lockout_callback(RpcResetLockoutCallback cb){ rpcResetLockoutCb = cb; }

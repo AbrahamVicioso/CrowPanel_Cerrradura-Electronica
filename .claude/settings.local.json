@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(pio run:*)",
-      "Bash(platformio run:*)"
+      "Bash(platformio run:*)",
+      "Bash(rm -rf \"C:/.piobuild/lock\" 2>/dev/null; rm -rf \"/mnt/c/.piobuild/lock\" 2>/dev/null; echo \"Listo\")"
     ],
     "deny": [],
     "ask": []

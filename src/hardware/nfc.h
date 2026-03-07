@@ -1,48 +1,61 @@
 /**
  * @file nfc.h
- * @brief Módulo de control del lector NFC
+ * @brief Módulo NFC — lectura PN532 + verificación de UID autorizado
  */
 
 #ifndef NFC_H
 #define NFC_H
 
+#include <Arduino.h>
 #include <Adafruit_PN532.h>
 
-// Longitud máxima del UID
+// Longitud máxima del UID (7 bytes = NTAG/MIFARE Ultralight)
 #define NFC_UID_MAX_LENGTH 7
 
 /**
- * @brief Estructura para almacenar datos de tarjeta NFC
+ * @brief Datos de una tarjeta NFC leída
  */
 typedef struct {
     uint8_t uid[NFC_UID_MAX_LENGTH];
     uint8_t uidLength;
-    bool valid;
+    bool    valid;
 } NfcTag;
 
 /**
  * @brief Inicializa el lector NFC
- * @return true si se inicializó correctamente, false en caso de error
+ * @return true si se encontró el módulo PN532
  */
 bool nfc_init(void);
 
 /**
- * @brief Lee una tarjeta NFC
- * @param tag Puntero a estructura para almacenar los datos de la tarjeta
- * @return true si se detectó una tarjeta, false en caso contrario
+ * @brief Lee una tarjeta NFC (timeout corto, no bloqueante)
+ * @param tag Puntero al struct donde almacenar el resultado
+ * @return true si se detectó una tarjeta
  */
 bool nfc_read_tag(NfcTag* tag);
 
 /**
- * @brief Verifica si hay una tarjeta NFC presente
- * @return true si hay tarjeta, false en caso contrario
+ * @brief Verifica si el UID de la tarjeta está autorizado
+ * @param tag Tarjeta leída
+ * @return true si está autorizada (o si no hay UID configurado)
  */
-bool nfc_is_present(void);
+bool nfc_is_authorized(const NfcTag* tag);
 
 /**
- * @brief Imprime el UID de la tarjeta al serial
- * @param uid Puntero al array de UID
- * @param uidLength Longitud del UID
+ * @brief Configura el UID autorizado
+ * @param uid_hex Cadena hex con el UID, ej: "A1:B2:C3:D4" o "A1B2C3D4"
+ */
+void nfc_set_authorized_uid(const char* uid_hex);
+
+/**
+ * @brief Convierte el UID de una tarjeta a cadena hex legible
+ * @param tag Tarjeta NFC
+ * @return String "AA:BB:CC:DD"
+ */
+String nfc_uid_to_string(const NfcTag* tag);
+
+/**
+ * @brief Imprime el UID al Serial
  */
 void nfc_print_uid(uint8_t* uid, uint8_t uidLength);
 

@@ -33,4 +33,11 @@ void standby_screen_update_time(void);
  */
 void standby_screen_set_tap_callback(void (*callback)(void));
 
+/**
+ * @brief Actualiza los indicadores de conectividad en la pantalla standby
+ * @param wifiOk   true si WiFi conectado
+ * @param tbOk     true si ThingsBoard conectado
+ */
+void standby_screen_update_status(bool wifiOk, bool tbOk);
+
 #endif // STANDBY_SCREEN_H

@@ -31,7 +31,18 @@ extern const uint16_t THINGSBOARD_PORT;
 // Device Access Token
 extern const char* THINGSBOARD_ACCESS_TOKEN;
 
-// Shared attribute name for lock state
+// ============================================
+// NOMBRES DE ATRIBUTOS COMPARTIDOS (TB → Device)
+// ============================================
+extern const char* ATTR_LOCK_STATE;          // "lockState"       → "locked"/"unlocked"
+extern const char* ATTR_CORRECT_PIN;         // "correctPin"      → "XXXXXX"
+extern const char* ATTR_AUTO_LOCK_DELAY;     // "autoLockDelay"   → ms (int)
+extern const char* ATTR_NFC_ENABLED;         // "nfcEnabled"      → bool
+extern const char* ATTR_NFC_UID;             // "authorizedNfcUid"→ "AA:BB:CC:DD"
+extern const char* ATTR_MAX_FAILED;          // "maxFailedAttempts"→ int
+extern const char* ATTR_LOCKOUT_DURATION;    // "lockoutDuration" → segundos
+
+// Alias de compatibilidad
 extern const char* LOCK_STATE_ATTRIBUTE;
 
 // MQTT Topics
