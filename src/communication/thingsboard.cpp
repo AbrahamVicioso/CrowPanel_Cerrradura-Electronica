@@ -188,9 +188,12 @@ bool thingsboard_connect(void)
     }
     if (tb.connected()) return true;
 
-    Serial.printf("[TB] Conectando a %s:%d ...\n", THINGSBOARD_SERVER, THINGSBOARD_PORT);
+    String tbServer = storage_get_tb_server();
+    String tbToken  = storage_get_tb_token();
 
-    if (!tb.connect(THINGSBOARD_SERVER, THINGSBOARD_ACCESS_TOKEN, THINGSBOARD_PORT)) {
+    Serial.printf("[TB] Conectando a %s:%d ...\n", tbServer.c_str(), THINGSBOARD_PORT);
+
+    if (!tb.connect(tbServer.c_str(), tbToken.c_str(), THINGSBOARD_PORT)) {
         Serial.println("[TB] Error de conexión");
         tbConnected = false;
         return false;

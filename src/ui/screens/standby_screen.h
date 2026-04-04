@@ -28,10 +28,17 @@ void standby_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, ui
 void standby_screen_update_time(void);
 
 /**
- * @brief Establece el callback para cuando se toca la pantalla
+ * @brief Establece el callback para cuando se toca la pantalla (abre pinpad)
  * @param callback Función a llamar cuando se toca
  */
 void standby_screen_set_tap_callback(void (*callback)(void));
+
+/**
+ * @brief Registra callback del gesto oculto para el portal de configuración.
+ *        Se activa con 5 toques en la esquina superior derecha dentro de 6 segundos.
+ * @param callback Función a llamar cuando se detecta el gesto
+ */
+void standby_screen_set_portal_callback(void (*callback)(void));
 
 /**
  * @brief Actualiza los indicadores de conectividad en la pantalla standby

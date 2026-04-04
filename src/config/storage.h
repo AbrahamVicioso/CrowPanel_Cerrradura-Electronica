@@ -45,4 +45,20 @@ void storage_set_nfc_enabled(bool enabled);
 int  storage_get_lockout_duration(void);
 void storage_set_lockout_duration(int seconds);
 
+// ── Credenciales WiFi ────────────────────────────
+String storage_get_wifi_ssid(void);
+void   storage_set_wifi_ssid(const char* ssid);
+String storage_get_wifi_pass(void);
+void   storage_set_wifi_pass(const char* pass);
+
+// ── Credenciales ThingsBoard ─────────────────────
+String storage_get_tb_server(void);
+void   storage_set_tb_server(const char* server);
+String storage_get_tb_token(void);
+void   storage_set_tb_token(const char* token);
+
+// ── Contraseña del portal de configuración ───────
+String storage_get_ap_password(void);
+void   storage_set_ap_password(const char* pass);
+
 #endif // STORAGE_H

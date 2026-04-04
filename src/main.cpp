@@ -35,6 +35,9 @@
 #include "ui/screens/unlocked_screen.h"
 #include "ui/screens/locked_screen.h"
 #include "ui/screens/error_screen.h"
+#include "ui/screens/config_screen.h"
+
+#include "config/portal.h"
 
 // ============================================
 // VARIABLES GLOBALES LVGL
@@ -297,14 +300,38 @@ void nfc_check_timer_cb(lv_timer_t* timer)
 }
 
 // ============================================
+// PORTAL DE CONFIGURACIÓN
+// ============================================
+
+void on_portal_activate(void)
+{
+    Serial.println("[Main] Gesto oculto detectado — iniciando portal de configuración");
+
+    // Detener NFC y ThingsBoard
+    if (nfc_timer) {
+        lv_timer_del(nfc_timer);
+        nfc_timer = nullptr;
+    }
+    thingsboard_disconnect();
+
+    // Iniciar AP + WebServer
+    portal_start();
+
+    // Mostrar pantalla de configuración
+    config_screen_show(portal_get_ap_ssid(), portal_get_ap_pass(), portal_get_ap_ip());
+}
+
+// ============================================
 // WiFi
 // ============================================
 
 void connect_wifi(void)
 {
-    Serial.printf("Conectando a WiFi: %s ...\n", WIFI_SSID);
+    String ssid = storage_get_wifi_ssid();
+    String pass = storage_get_wifi_pass();
+    Serial.printf("Conectando a WiFi: %s ...\n", ssid.c_str());
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(ssid.c_str(), pass.c_str());
 
     for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
         delay(500);
@@ -451,6 +478,9 @@ void setup()
         pinpad_screen_show(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0);
     });
 
+    // Callback gesto oculto → portal de configuración
+    standby_screen_set_portal_callback(on_portal_activate);
+
     // Bienvenida → standby
     welcome_screen_animate_to(screen_standby);
 
@@ -484,6 +514,13 @@ void loop()
 {
     // ── LVGL (máxima prioridad) ─────────────────────────────
     uint32_t next = lv_timer_handler();
+
+    // ── Portal de configuración ──────────────────────────────
+    if (portal_is_active()) {
+        portal_loop();
+        yield();
+        return;  // no ejecutar lógica normal mientras el portal está activo
+    }
 
     // ── ThingsBoard ──────────────────────────────────────────
     static uint32_t last_tb = 0;

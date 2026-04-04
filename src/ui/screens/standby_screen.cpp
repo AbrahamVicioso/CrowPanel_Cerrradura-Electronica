@@ -33,10 +33,20 @@ static lv_obj_t* dot_wifi        = nullptr;  // punto WiFi
 static lv_obj_t* dot_tb          = nullptr;  // punto ThingsBoard
 static lv_obj_t* lbl_wifi_status = nullptr;  // texto "WIFI" / "TB"
 
-static void (*tap_callback)(void) = nullptr;
-static lv_timer_t* clock_timer   = nullptr;
-static lv_timer_t* colon_timer   = nullptr;
-static bool colon_visible        = true;
+static void (*tap_callback)(void)    = nullptr;
+static void (*portal_callback)(void) = nullptr;
+static lv_timer_t* clock_timer      = nullptr;
+static lv_timer_t* colon_timer      = nullptr;
+static bool colon_visible           = true;
+
+// Detección de gesto oculto: 5 toques en esquina superior derecha en 6s
+#define CORNER_X_MIN      700   // x > 700
+#define CORNER_Y_MAX      100   // y < 100
+#define CORNER_TAPS_REQ     5
+#define CORNER_TIMEOUT_MS 6000
+
+static uint8_t  corner_tap_count  = 0;
+static uint32_t last_corner_tap   = 0;
 
 // ────────────────────────────────────────────────
 //  Paleta
@@ -124,12 +134,36 @@ static void colon_blink_cb(lv_timer_t*)
 }
 
 // ────────────────────────────────────────────────
-//  Touch callback
+//  Touch callback — con detección de gesto oculto
 // ────────────────────────────────────────────────
 static void screen_touch_cb(lv_event_t* e)
 {
-    if (e->code == LV_EVENT_CLICKED && tap_callback)
-        tap_callback();
+    if (e->code != LV_EVENT_CLICKED) return;
+
+    // Obtener posición del toque
+    lv_indev_t* indev = lv_indev_get_act();
+    lv_point_t  point = {0, 0};
+    if (indev) lv_indev_get_point(indev, &point);
+
+    // ── Verificar esquina superior derecha (gesto oculto) ──
+    if (point.x > CORNER_X_MIN && point.y < CORNER_Y_MAX) {
+        uint32_t now = millis();
+        if (now - last_corner_tap > CORNER_TIMEOUT_MS) {
+            corner_tap_count = 0;  // expiró la secuencia
+        }
+        last_corner_tap = now;
+        corner_tap_count++;
+
+        if (corner_tap_count >= CORNER_TAPS_REQ) {
+            corner_tap_count = 0;
+            if (portal_callback) portal_callback();
+        }
+        return;  // no abrir pinpad
+    }
+
+    // ── Toque normal → abrir pinpad ───────────────────────
+    corner_tap_count = 0;
+    if (tap_callback) tap_callback();
 }
 
 // ────────────────────────────────────────────────
@@ -311,11 +345,19 @@ void standby_screen_update_time(void)
 }
 
 /**
- * @brief Registra callback de toque
+ * @brief Registra callback de toque normal
  */
 void standby_screen_set_tap_callback(void (*callback)(void))
 {
     tap_callback = callback;
+}
+
+/**
+ * @brief Registra callback del gesto oculto (portal de configuración)
+ */
+void standby_screen_set_portal_callback(void (*callback)(void))
+{
+    portal_callback = callback;
 }
 
 /**

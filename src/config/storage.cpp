@@ -5,6 +5,7 @@
 
 #include "storage.h"
 #include "config.h"
+#include "network_config.h"
 #include <Preferences.h>
 
 static Preferences prefs;
@@ -83,4 +84,62 @@ int storage_get_lockout_duration(void)
 void storage_set_lockout_duration(int seconds)
 {
     prefs.putInt("lockout_s", seconds);
+}
+
+// ── Credenciales WiFi ────────────────────────────
+String storage_get_wifi_ssid(void)
+{
+    return prefs.getString("wifi_ssid", WIFI_SSID);
+}
+
+void storage_set_wifi_ssid(const char* ssid)
+{
+    prefs.putString("wifi_ssid", ssid);
+    Serial.printf("WiFi SSID guardado: %s\n", ssid);
+}
+
+String storage_get_wifi_pass(void)
+{
+    return prefs.getString("wifi_pass", WIFI_PASSWORD);
+}
+
+void storage_set_wifi_pass(const char* pass)
+{
+    prefs.putString("wifi_pass", pass);
+    Serial.println("WiFi password guardado");
+}
+
+// ── Credenciales ThingsBoard ─────────────────────
+String storage_get_tb_server(void)
+{
+    return prefs.getString("tb_server", THINGSBOARD_SERVER);
+}
+
+void storage_set_tb_server(const char* server)
+{
+    prefs.putString("tb_server", server);
+    Serial.printf("TB server guardado: %s\n", server);
+}
+
+String storage_get_tb_token(void)
+{
+    return prefs.getString("tb_token", THINGSBOARD_ACCESS_TOKEN);
+}
+
+void storage_set_tb_token(const char* token)
+{
+    prefs.putString("tb_token", token);
+    Serial.println("TB token guardado");
+}
+
+// ── Contraseña portal de configuración ──────────
+String storage_get_ap_password(void)
+{
+    return prefs.getString("ap_pass", "admin1234");
+}
+
+void storage_set_ap_password(const char* pass)
+{
+    prefs.putString("ap_pass", pass);
+    Serial.println("AP password guardado");
 }
