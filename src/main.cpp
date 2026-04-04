@@ -36,6 +36,7 @@
 #include "ui/screens/locked_screen.h"
 #include "ui/screens/error_screen.h"
 #include "ui/screens/config_screen.h"
+#include "ui/screens/info_screen.h"
 
 #include "config/portal.h"
 
@@ -300,6 +301,19 @@ void nfc_check_timer_cb(lv_timer_t* timer)
 }
 
 // ============================================
+// PANTALLA DE INFORMACIÓN
+// ============================================
+
+void on_info_activate(void)
+{
+    bool tbOk = thingsboard_is_connected();
+    info_screen_show(tbOk, nfc_enabled, []() {
+        display_turn_on();
+        lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+    });
+}
+
+// ============================================
 // PORTAL DE CONFIGURACIÓN
 // ============================================
 
@@ -480,6 +494,9 @@ void setup()
 
     // Callback gesto oculto → portal de configuración
     standby_screen_set_portal_callback(on_portal_activate);
+
+    // Callback long press → pantalla de información
+    standby_screen_set_info_callback(on_info_activate);
 
     // Bienvenida → standby
     welcome_screen_animate_to(screen_standby);

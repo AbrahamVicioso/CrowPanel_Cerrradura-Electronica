@@ -35,18 +35,26 @@ static lv_obj_t* lbl_wifi_status = nullptr;  // texto "WIFI" / "TB"
 
 static void (*tap_callback)(void)    = nullptr;
 static void (*portal_callback)(void) = nullptr;
+static void (*info_callback)(void)   = nullptr;
 static lv_timer_t* clock_timer      = nullptr;
 static lv_timer_t* colon_timer      = nullptr;
 static bool colon_visible           = true;
 
-// Detección de gesto oculto: 5 toques en esquina superior derecha en 6s
-#define CORNER_X_MIN      700   // x > 700
-#define CORNER_Y_MAX      100   // y < 100
+// Gesto oculto portal: 5 toques en esquina superior derecha en 6s
+#define CORNER_X_MIN      700
+#define CORNER_Y_MAX      100
 #define CORNER_TAPS_REQ     5
 #define CORNER_TIMEOUT_MS 6000
 
-static uint8_t  corner_tap_count  = 0;
-static uint32_t last_corner_tap   = 0;
+static uint8_t  corner_tap_count = 0;
+static uint32_t last_corner_tap  = 0;
+
+// Long press para pantalla de info
+#define INFO_LONG_PRESS_MS 2000
+
+static uint32_t  press_start_ms = 0;
+static lv_coord_t press_x       = 0;
+static lv_coord_t press_y       = 0;
 
 // ────────────────────────────────────────────────
 //  Paleta
@@ -134,35 +142,49 @@ static void colon_blink_cb(lv_timer_t*)
 }
 
 // ────────────────────────────────────────────────
-//  Touch callback — con detección de gesto oculto
+//  Touch callback — gesto oculto + long press info
 // ────────────────────────────────────────────────
 static void screen_touch_cb(lv_event_t* e)
 {
-    if (e->code != LV_EVENT_CLICKED) return;
+    lv_event_code_t code = lv_event_get_code(e);
 
-    // Obtener posición del toque
     lv_indev_t* indev = lv_indev_get_act();
     lv_point_t  point = {0, 0};
     if (indev) lv_indev_get_point(indev, &point);
 
-    // ── Verificar esquina superior derecha (gesto oculto) ──
-    if (point.x > CORNER_X_MIN && point.y < CORNER_Y_MAX) {
-        uint32_t now = millis();
-        if (now - last_corner_tap > CORNER_TIMEOUT_MS) {
-            corner_tap_count = 0;  // expiró la secuencia
-        }
-        last_corner_tap = now;
-        corner_tap_count++;
+    // ── Registrar inicio de pulsación ─────────────────────
+    if (code == LV_EVENT_PRESSED) {
+        press_start_ms = millis();
+        press_x = point.x;
+        press_y = point.y;
+        return;
+    }
 
-        if (corner_tap_count >= CORNER_TAPS_REQ) {
+    if (code != LV_EVENT_RELEASED) return;
+
+    uint32_t held_ms = millis() - press_start_ms;
+
+    // ── Esquina superior derecha → gesto portal ───────────
+    if (press_x > CORNER_X_MIN && press_y < CORNER_Y_MAX) {
+        uint32_t now = millis();
+        if (now - last_corner_tap > CORNER_TIMEOUT_MS) corner_tap_count = 0;
+        last_corner_tap = now;
+        if (++corner_tap_count >= CORNER_TAPS_REQ) {
             corner_tap_count = 0;
             if (portal_callback) portal_callback();
         }
-        return;  // no abrir pinpad
+        return;
     }
 
-    // ── Toque normal → abrir pinpad ───────────────────────
     corner_tap_count = 0;
+
+    // ── Long press (~2s) → pantalla de info ───────────────
+    if (held_ms >= INFO_LONG_PRESS_MS) {
+        if (info_callback) info_callback();
+        return;
+    }
+
+    // ── Toque normal → pinpad ─────────────────────────────
     if (tap_callback) tap_callback();
 }
 
@@ -315,7 +337,8 @@ lv_obj_t* standby_screen_create(void)
     lv_obj_set_style_bg_opa(touch_area, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(touch_area, 0, 0);
     lv_obj_clear_flag(touch_area, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(touch_area, screen_touch_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(touch_area, screen_touch_cb, LV_EVENT_PRESSED,  NULL);
+    lv_obj_add_event_cb(touch_area, screen_touch_cb, LV_EVENT_RELEASED, NULL);
 
     // ── Inicializar y arrancar timers ────────────────────
     update_clock();
@@ -358,6 +381,11 @@ void standby_screen_set_tap_callback(void (*callback)(void))
 void standby_screen_set_portal_callback(void (*callback)(void))
 {
     portal_callback = callback;
+}
+
+void standby_screen_set_info_callback(void (*callback)(void))
+{
+    info_callback = callback;
 }
 
 /**

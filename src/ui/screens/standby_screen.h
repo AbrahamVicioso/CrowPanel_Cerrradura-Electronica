@@ -41,6 +41,11 @@ void standby_screen_set_tap_callback(void (*callback)(void));
 void standby_screen_set_portal_callback(void (*callback)(void));
 
 /**
+ * @brief Registra callback de long press (mantener ~2s) → pantalla de info.
+ */
+void standby_screen_set_info_callback(void (*callback)(void));
+
+/**
  * @brief Actualiza los indicadores de conectividad en la pantalla standby
  * @param wifiOk   true si WiFi conectado
  * @param tbOk     true si ThingsBoard conectado
