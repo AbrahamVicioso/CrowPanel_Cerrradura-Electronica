@@ -6,6 +6,7 @@
       "Bash(rm -rf \"C:/.piobuild/lock\" 2>/dev/null; rm -rf \"/mnt/c/.piobuild/lock\" 2>/dev/null; echo \"Listo\")"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "defaultMode": "bypassPermissions"
   }
 }

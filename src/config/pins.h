@@ -11,7 +11,7 @@
 // ============================================
 
 // Pin del relay/cerradura
-#define LOCK_PIN 38
+#define LOCK_PIN 43
 
 // Backlight LCD
 #define TFT_BL 2
