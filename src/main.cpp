@@ -20,6 +20,7 @@
 #include "config/pins.h"
 #include "config/network_config.h"
 #include "config/storage.h"
+#include "config/credentials.h"
 
 #include "hardware/display.h"
 #include "hardware/touch.h"
@@ -223,10 +224,10 @@ void on_remote_state_change(bool locked)
     }
 }
 
-void on_pin_update(const char* newPin)
+void on_credentials_update(const char* json)
 {
-    Serial.printf("[Main] PIN actualizado desde TB: %s\n", newPin);
-    pinpad_set_correct_pin(String(newPin));
+    Serial.println("[Main] Credenciales recibidas desde TB");
+    credentials_update(json);
 }
 
 void on_auto_lock_delay_update(uint32_t delayMs)
@@ -375,6 +376,15 @@ void setup()
     Serial.println("[1/7] Storage NVS...");
     storage_init();
 
+    // Cargar credenciales guardadas (contingencia sin internet)
+    String savedCreds = storage_get_credentials();
+    if (savedCreds.length() > 0) {
+        Serial.println("[Main] Credenciales previas encontradas en NVS:");
+        credentials_update(savedCreds.c_str());
+    } else {
+        Serial.println("[Main] Sin credenciales en NVS — esperando ThingsBoard");
+    }
+
     // 2. Hardware
     Serial.println("[2/7] Hardware (cerradura)...");
     lock_init();
@@ -411,7 +421,7 @@ void setup()
 
         // Registrar todos los callbacks ANTES de conectar
         thingsboard_set_state_change_callback(on_remote_state_change);
-        thingsboard_set_pin_update_callback(on_pin_update);
+        thingsboard_set_credentials_update_callback(on_credentials_update);
         thingsboard_set_auto_lock_delay_callback(on_auto_lock_delay_update);
         thingsboard_set_nfc_enabled_callback(on_nfc_enabled_update);
         thingsboard_set_nfc_uid_callback(on_nfc_uid_update);
@@ -469,8 +479,8 @@ void setup()
     screen_locked   = locked_screen_create();
     screen_error    = error_screen_create();
 
-    // Cargar configuración persistida en el pinpad
-    pinpad_set_correct_pin(storage_get_pin());
+    // Registrar validador de PIN (usa credenciales recibidas desde TB)
+    pinpad_set_pin_validator(credentials_validate_pin);
     pinpad_set_max_failed_attempts(storage_get_max_failed_attempts());
     pinpad_set_lockout_duration_ms((uint32_t)storage_get_lockout_duration() * 1000);
     current_auto_lock_delay = storage_get_auto_lock_delay();
@@ -513,10 +523,10 @@ void setup()
     nfc_timer = lv_timer_create(nfc_check_timer_cb, NFC_CHECK_INTERVAL_MS, NULL);
 
     Serial.println("\n========================================");
-    Serial.printf("Sistema listo! PIN: %s | NFC: %s\n",
-                  storage_get_pin().c_str(),
+    Serial.printf("Sistema listo! Creds: %d | NFC: %s\n",
+                  credentials_get_count(),
                   nfc_enabled ? "habilitado" : "deshabilitado");
-    Serial.println("ThingsBoard shared attrs: lockState, correctPin,");
+    Serial.println("ThingsBoard shared attrs: lockState, credenciales,");
     Serial.println("  autoLockDelay, nfcEnabled, authorizedNfcUid,");
     Serial.println("  maxFailedAttempts, lockoutDuration");
     Serial.println("ThingsBoard RPC: unlockTemporary, resetLockout");

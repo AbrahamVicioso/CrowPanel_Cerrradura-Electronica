@@ -37,8 +37,8 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
     &serverSideRPC
 };
 
-// Buffer de envío 256 bytes, recepción 512 bytes
-static ThingsBoardSized<64> tb(mqttClient, 256, 512, Default_Max_Stack_Size, apis);
+// Buffer envío 256 bytes, recepción 1024 bytes (suficiente para array credenciales ~450 bytes)
+static ThingsBoardSized<64> tb(mqttClient, 256, 1024, Default_Max_Stack_Size, apis);
 
 // ============================================
 // ESTADO INTERNO
@@ -53,7 +53,7 @@ static bool     isProcessingRemoteChange  = false;
 // ============================================
 
 static RemoteStateCallback      stateChangeCb       = nullptr;
-static PinUpdateCallback        pinUpdateCb         = nullptr;
+static CredentialsUpdateCallback credentialsUpdateCb = nullptr;
 static AutoLockDelayCallback    autoLockDelayCb     = nullptr;
 static NfcEnabledCallback       nfcEnabledCb        = nullptr;
 static NfcUidCallback           nfcUidCb            = nullptr;
@@ -87,12 +87,12 @@ static void processSharedAttributes(const JsonObjectConst& data)
         }
     }
 
-    // ── correctPin ───────────────────────────────────────────
-    if (data.containsKey(ATTR_CORRECT_PIN)) {
-        const char* pin = data[ATTR_CORRECT_PIN];
-        Serial.printf("  correctPin = %s\n", pin);
-        storage_set_pin(pin);
-        if (pinUpdateCb) pinUpdateCb(pin);
+    // ── credenciales ─────────────────────────────────────────
+    if (data.containsKey(ATTR_CREDENTIALS)) {
+        String json;
+        serializeJson(data[ATTR_CREDENTIALS], json);
+        Serial.printf("  credenciales recibidas (%d bytes)\n", json.length());
+        if (credentialsUpdateCb) credentialsUpdateCb(json.c_str());
     }
 
     // ── autoLockDelay ────────────────────────────────────────
@@ -205,7 +205,7 @@ bool thingsboard_connect(void)
     // ── Suscribir a los 7 shared attributes ───────────────
     const std::array<const char*, 7U> attrs = {{
         ATTR_LOCK_STATE,
-        ATTR_CORRECT_PIN,
+        ATTR_CREDENTIALS,
         ATTR_AUTO_LOCK_DELAY,
         ATTR_NFC_ENABLED,
         ATTR_NFC_UID,
@@ -334,8 +334,8 @@ bool thingsboard_publish_client_attributes(void)
 
 // ── Registro de callbacks ────────────────────────────────────
 
-void thingsboard_set_state_change_callback(RemoteStateCallback cb)   { stateChangeCb     = cb; }
-void thingsboard_set_pin_update_callback(PinUpdateCallback cb)        { pinUpdateCb       = cb; }
+void thingsboard_set_state_change_callback(RemoteStateCallback cb)    { stateChangeCb        = cb; }
+void thingsboard_set_credentials_update_callback(CredentialsUpdateCallback cb) { credentialsUpdateCb = cb; }
 void thingsboard_set_auto_lock_delay_callback(AutoLockDelayCallback cb){ autoLockDelayCb  = cb; }
 void thingsboard_set_nfc_enabled_callback(NfcEnabledCallback cb)      { nfcEnabledCb     = cb; }
 void thingsboard_set_nfc_uid_callback(NfcUidCallback cb)              { nfcUidCb         = cb; }

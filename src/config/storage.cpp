@@ -7,15 +7,16 @@
 #include "config.h"
 #include "network_config.h"
 #include <Preferences.h>
+#include <esp_log.h>
 
 static Preferences prefs;
 
 void storage_init(void)
 {
+    // Suprimir mensajes verbose de Preferences (NOT_FOUND en primer arranque)
+    esp_log_level_set("Preferences", ESP_LOG_NONE);
     prefs.begin("lock_cfg", false);
     Serial.println("Storage NVS inicializado");
-    Serial.printf("  PIN guardado: %s\n", storage_get_pin().c_str());
-    Serial.printf("  NFC UID: %s\n",      storage_get_nfc_uid().c_str());
 }
 
 // ── PIN ─────────────────────────────────────────
@@ -130,6 +131,18 @@ void storage_set_tb_token(const char* token)
 {
     prefs.putString("tb_token", token);
     Serial.println("TB token guardado");
+}
+
+// ── Credenciales de acceso (JSON completo) ───────
+String storage_get_credentials(void)
+{
+    return prefs.getString("creds_json", "");
+}
+
+void storage_set_credentials(const char* json)
+{
+    prefs.putString("creds_json", json);
+    Serial.printf("[Storage] Credenciales guardadas en NVS (%d bytes)\n", strlen(json));
 }
 
 // ── Contraseña portal de configuración ──────────

@@ -35,7 +35,7 @@ extern const char* THINGSBOARD_ACCESS_TOKEN;
 // NOMBRES DE ATRIBUTOS COMPARTIDOS (TB → Device)
 // ============================================
 extern const char* ATTR_LOCK_STATE;          // "lockState"       → "locked"/"unlocked"
-extern const char* ATTR_CORRECT_PIN;         // "correctPin"      → "XXXXXX"
+extern const char* ATTR_CREDENTIALS;         // "credenciales"    → array JSON
 extern const char* ATTR_AUTO_LOCK_DELAY;     // "autoLockDelay"   → ms (int)
 extern const char* ATTR_NFC_ENABLED;         // "nfcEnabled"      → bool
 extern const char* ATTR_NFC_UID;             // "authorizedNfcUid"→ "AA:BB:CC:DD"

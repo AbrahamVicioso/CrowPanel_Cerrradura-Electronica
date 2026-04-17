@@ -4,7 +4,7 @@
  *
  * Atributos compartidos recibidos (TB Dashboard → Dispositivo):
  *   lockState          "locked"/"unlocked"
- *   correctPin         "XXXXXX"
+ *   credenciales       array JSON de credenciales
  *   autoLockDelay      ms (entero)
  *   nfcEnabled         bool
  *   authorizedNfcUid   "AA:BB:CC:DD"
@@ -45,8 +45,8 @@
 /** Estado remoto cambiado (lockState attribute) */
 typedef void (*RemoteStateCallback)(bool locked);
 
-/** PIN cambiado desde TB */
-typedef void (*PinUpdateCallback)(const char* newPin);
+/** Array de credenciales recibido desde TB (JSON serializado) */
+typedef void (*CredentialsUpdateCallback)(const char* json);
 
 /** Delay auto-bloqueo cambiado */
 typedef void (*AutoLockDelayCallback)(uint32_t delayMs);
@@ -105,7 +105,7 @@ bool thingsboard_publish_client_attributes(void);
 // ============================================
 
 void thingsboard_set_state_change_callback(RemoteStateCallback cb);
-void thingsboard_set_pin_update_callback(PinUpdateCallback cb);
+void thingsboard_set_credentials_update_callback(CredentialsUpdateCallback cb);
 void thingsboard_set_auto_lock_delay_callback(AutoLockDelayCallback cb);
 void thingsboard_set_nfc_enabled_callback(NfcEnabledCallback cb);
 void thingsboard_set_nfc_uid_callback(NfcUidCallback cb);

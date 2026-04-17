@@ -323,7 +323,7 @@ void loop() {
 ```cpp
 // Atributos suscritos (7 total)
 static const char* ATTR_LOCK_STATE = "lockState";
-static const char* ATTR_CORRECT_PIN = "correctPin";
+static const char* ATTR_CREDENTIALS = "credenciales";   // array JSON
 static const char* ATTR_AUTO_LOCK_DELAY = "autoLockDelay";
 static const char* ATTR_NFC_ENABLED = "nfcEnabled";
 static const char* ATTR_AUTHORIZED_NFC_UID = "authorizedNfcUid";
@@ -335,6 +335,10 @@ static void processSharedAttributes(const JsonObjectConst& data) {
     if (data.containsKey(ATTR_LOCK_STATE)) {
         bool shouldLock = (strcmp(data[ATTR_LOCK_STATE], "locked") == 0);
         stateChangeCb(shouldLock);
+    }
+    if (data.containsKey(ATTR_CREDENTIALS)) {
+        String json; serializeJson(data[ATTR_CREDENTIALS], json);
+        credentialsUpdateCb(json.c_str());  // → credentials_update()
     }
     // ... procesar otros atributos
 }
@@ -430,55 +434,23 @@ static void pin_button_event_cb(lv_event_t* e) {
 
 ## 🔒 Sistema de Seguridad
 
-### Validación PIN
+### Validación PIN — via credentials module
 ```cpp
-// Estados del PIN pad
-static String entered_pin = "";
-static String correct_pin = DEFAULT_PIN;
-static int failed_attempts = 0;
+// pinpad_screen.cpp usa un callback validador en lugar de PIN fijo
+static PinValidatorCallback pin_validator = nullptr;
+void pinpad_set_pin_validator(PinValidatorCallback validator);
 
-// Lógica de validación
-void pinpad_append_digit(char digit) {
-    if (entered_pin.length() < PIN_LENGTH) {
-        entered_pin += digit;
-        update_display();
-
-        if (entered_pin.length() == PIN_LENGTH) {
-            validate_pin();
-        }
-    }
-}
-
-void validate_pin() {
-    if (entered_pin == correct_pin) {
-        if (success_cb) success_cb();
-        pinpad_reset();
-    } else {
-        if (error_cb) error_cb();
-        handle_failed_attempt();
-    }
-}
+// credentials.cpp valida contra array de TB
+bool credentials_validate_pin(const String& pin);
+// - Compara con cada credencial cargada
+// - Para "huesped": verifica ventana activacion/expiracion (UTC)
+// - Para "personal": verifica solo expiracion (null = nunca expira)
+// - Si NTP no sincronizado: permite acceso si PIN coincide (warning en serial)
 ```
 
 ### Sistema de Lockout
-```cpp
-// Lockout por intentos fallidos
-static bool lockout_active = false;
-static lv_timer_t* lockout_timer = nullptr;
-
-void handle_failed_attempt() {
-    failed_attempts++;
-    if (failed_attempts >= max_failed_attempts) {
-        activate_lockout();
-    }
-}
-
-void activate_lockout() {
-    lockout_active = true;
-    // Mostrar countdown en pantalla
-    // Crear timer para reset automático
-}
-```
+**ELIMINADO** — intentos fallidos no bloquean la pantalla.
+`pinpad_is_locked_out()` siempre devuelve `false`.
 
 ### NFC Authorization
 ```cpp
@@ -507,7 +479,7 @@ Namespace: `"lock_cfg"` (no `"lock_config"`)
 Claves reales (strings literales en storage.cpp, sin `#define`):
 | Clave NVS    | Función                              |
 |--------------|--------------------------------------|
-| `"pin"`      | PIN correcto (string)                |
+| `"creds_json"`| Array JSON completo de credenciales (contingencia offline) |
 | `"nfc_uid"`  | UID NFC autorizado (hex string)      |
 | `"max_fail"` | Máx. intentos fallidos (int)         |
 | `"auto_lock"`| Delay auto-bloqueo ms (uint)         |
@@ -700,7 +672,13 @@ if (WiFi.status() != WL_CONNECTED) {
 - **UI responsiveness**: LVGL maneja input/output
 - **Power management**: Backlight y estados de bajo consumo
 - **Network reliability**: Reconnection automática
-- **Security**: Lockout y validación de entrada
+- **Security**: Sin lockout de pantalla — credenciales con ventana temporal desde TB
+
+### ⚠️ Reglas de Performance ESP32
+- **NUNCA** imprimir strings largos (JSON completo) en el loop o en callbacks frecuentes — usar `Serial.printf` solo con longitud, no contenido
+- **NUNCA** aumentar `ThingsBoardSized<N>` más allá de `<64>` — causa presión de memoria
+- **Buffer MQTT recepción**: 1024 bytes es suficiente para el JSON de credenciales (~450 bytes); no aumentar sin necesidad
+- **`DynamicJsonDocument`**: usar tamaño mínimo necesario; en credentials.cpp usar 2048 (suficiente para 20 credenciales)
 
 ---
 

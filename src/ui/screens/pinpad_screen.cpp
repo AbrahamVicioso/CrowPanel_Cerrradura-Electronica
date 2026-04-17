@@ -16,23 +16,17 @@ static lv_obj_t* screen_pinpad       = nullptr;
 static lv_obj_t* label_pin_display   = nullptr;
 static lv_obj_t* label_status        = nullptr;
 static lv_obj_t* label_nfc_hint      = nullptr;
-static lv_obj_t* label_attempt_dots  = nullptr;  // puntos de intento visual
 
 // ============================================
 // ESTADO
 // ============================================
 
-static String pinCode    = "";
-static String correctPin = DEFAULT_PIN;
+static String pinCode = "";
+static PinValidatorCallback pin_validator = nullptr;
 
-// Lockout
+// Intentos fallidos (solo para telemetría)
 static int      failedAttempts       = 0;
 static int      maxFailedAttempts    = MAX_FAILED_ATTEMPTS;
-static uint32_t lockoutDurationMs    = LOCKOUT_DURATION_MS;
-static bool     lockedOut            = false;
-static lv_timer_t* lockout_timer     = nullptr;
-static int      lockoutSecondsLeft   = 0;
-static lv_timer_t* lockout_tick      = nullptr;
 
 // Inactividad
 static lv_timer_t* inactivity_timer  = nullptr;
@@ -48,90 +42,6 @@ static PinpadFailedAttemptsCallback failed_atts_cb  = nullptr;
 // FORWARD DECLARATIONS
 // ============================================
 static void reset_inactivity_timer(void);
-static void update_attempt_dots(void);
-static void show_lockout_state(void);
-
-// ============================================
-// HELPERS VISUALES
-// ============================================
-
-static void update_attempt_dots(void)
-{
-    if (!label_attempt_dots) return;
-
-    // Mostrar círculos: rojo para fallidos, gris para restantes
-    String dots = "";
-    for (int i = 0; i < maxFailedAttempts; i++) {
-        if (i > 0) dots += " ";
-        dots += (i < failedAttempts) ? LV_SYMBOL_CLOSE : LV_SYMBOL_MINUS;
-    }
-    lv_label_set_text(label_attempt_dots, dots.c_str());
-    lv_obj_set_style_text_color(label_attempt_dots,
-        failedAttempts > 0 ? COLOR_ERROR : COLOR_TEXT_MUTED, 0);
-}
-
-// ============================================
-// LOCKOUT
-// ============================================
-
-static void lockout_tick_cb(lv_timer_t* t)
-{
-    lockoutSecondsLeft--;
-    if (lockoutSecondsLeft <= 0) {
-        lv_timer_del(t);
-        lockout_tick = nullptr;
-    }
-    if (label_status && lockedOut) {
-        char buf[48];
-        snprintf(buf, sizeof(buf), "BLOQUEADO — %ds", lockoutSecondsLeft > 0 ? lockoutSecondsLeft : 0);
-        lv_label_set_text(label_status, buf);
-        lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
-    }
-}
-
-static void lockout_end_cb(lv_timer_t* t)
-{
-    lv_timer_del(t);
-    lockout_timer = nullptr;
-
-    if (lockout_tick) { lv_timer_del(lockout_tick); lockout_tick = nullptr; }
-
-    lockedOut      = false;
-    failedAttempts = 0;
-
-    if (label_status) {
-        lv_label_set_text(label_status, "Ingrese PIN");
-        lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-    }
-    update_attempt_dots();
-    Serial.println("[Pinpad] Lockout terminado");
-}
-
-static void show_lockout_state(void)
-{
-    lockedOut = true;
-    lockoutSecondsLeft = (int)(lockoutDurationMs / 1000);
-
-    if (lockout_timer) lv_timer_del(lockout_timer);
-    if (lockout_tick)  lv_timer_del(lockout_tick);
-
-    lockout_timer = lv_timer_create(lockout_end_cb, lockoutDurationMs, NULL);
-    lv_timer_set_repeat_count(lockout_timer, 1);
-
-    // Tick cada segundo para countdown
-    lockout_tick = lv_timer_create(lockout_tick_cb, 1000, NULL);
-
-    if (label_status) {
-        char buf[48];
-        snprintf(buf, sizeof(buf), "BLOQUEADO — %ds", lockoutSecondsLeft);
-        lv_label_set_text(label_status, buf);
-        lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
-    }
-    if (label_nfc_hint) lv_obj_add_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
-
-    Serial.printf("[Pinpad] LOCKOUT por %d s (%d intentos fallidos)\n",
-                  lockoutSecondsLeft, failedAttempts);
-}
 
 // ============================================
 // TIMER CALLBACKS
@@ -141,49 +51,37 @@ static void validate_pin_cb(lv_timer_t* t)
 {
     lv_timer_del(t);
 
-    if (lockedOut) return;
-
-    if (pinCode == correctPin) {
+    bool valid = pin_validator ? pin_validator(pinCode) : false;
+    if (valid) {
         // ── Éxito ──
         lv_label_set_text(label_status, "ACCESO OK");
         lv_obj_set_style_text_color(label_status, COLOR_SUCCESS, 0);
         failedAttempts = 0;
-        update_attempt_dots();
         if (success_cb) success_cb();
     } else {
-        // ── Fallo ──
+        // ── Fallo ── mostrar error y dejar reintentar inmediatamente
         failedAttempts++;
         if (failed_atts_cb) failed_atts_cb(failedAttempts);
-        update_attempt_dots();
 
         pinCode = "";
         if (label_pin_display) lv_label_set_text(label_pin_display, "");
 
-        if (failedAttempts >= maxFailedAttempts) {
-            show_lockout_state();
-            if (error_cb) error_cb();
-        } else {
-            int restantes = maxFailedAttempts - failedAttempts;
-            char buf[48];
-            snprintf(buf, sizeof(buf), "PIN incorrecto (%d restante%s)",
-                     restantes, restantes == 1 ? "" : "s");
-            if (label_status) {
-                lv_label_set_text(label_status, buf);
-                lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
-            }
-            if (error_cb) error_cb();
-
-            // Restaurar mensaje después de 2s
-            lv_timer_t* rt = lv_timer_create([](lv_timer_t* rt2){
-                lv_timer_del(rt2);
-                if (label_status && !lockedOut) {
-                    lv_label_set_text(label_status, "Ingrese PIN");
-                    lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-                }
-                if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
-            }, 2000, NULL);
-            lv_timer_set_repeat_count(rt, 1);
+        if (label_status) {
+            lv_label_set_text(label_status, "PIN incorrecto");
+            lv_obj_set_style_text_color(label_status, COLOR_ERROR, 0);
         }
+        if (error_cb) error_cb();
+
+        // Restaurar mensaje después de 2s
+        lv_timer_t* rt = lv_timer_create([](lv_timer_t* rt2){
+            lv_timer_del(rt2);
+            if (label_status) {
+                lv_label_set_text(label_status, "Ingrese PIN");
+                lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
+            }
+            if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
+        }, 2000, NULL);
+        lv_timer_set_repeat_count(rt, 1);
     }
 }
 
@@ -191,8 +89,6 @@ static void inactivity_timer_cb(lv_timer_t* timer)
 {
     lv_timer_del(timer);
     inactivity_timer = nullptr;
-
-    if (lockedOut) return;  // Si está bloqueado, no volver a standby
 
     pinCode = "";
     if (label_pin_display) lv_label_set_text(label_pin_display, "");
@@ -218,7 +114,6 @@ static void reset_inactivity_timer(void)
 static void btn_num_event_cb(lv_event_t* e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    if (lockedOut) return;
 
     lv_obj_t* btn = lv_event_get_target(e);
     const char* num = lv_label_get_text(lv_obj_get_child(btn, 0));
@@ -248,7 +143,6 @@ static void btn_num_event_cb(lv_event_t* e)
 static void btn_clear_event_cb(lv_event_t* e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    if (lockedOut) return;
 
     pinCode = "";
     if (label_pin_display) lv_label_set_text(label_pin_display, "");
@@ -319,16 +213,6 @@ lv_obj_t* pinpad_screen_create(void)
     lv_obj_set_style_text_font(label_nfc_hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(label_nfc_hint, COLOR_TEXT_MUTED, 0);
     lv_obj_align(label_nfc_hint, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    // ── Puntos de intento ────────────────────────────────────
-    label_attempt_dots = lv_label_create(screen_pinpad);
-    lv_label_set_text(label_attempt_dots, "");
-    lv_obj_set_style_text_font(label_attempt_dots, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(label_attempt_dots, COLOR_TEXT_MUTED, 0);
-    lv_obj_set_pos(label_attempt_dots, 0, 202);
-    lv_obj_set_width(label_attempt_dots, 800);
-    lv_obj_set_style_text_align(label_attempt_dots, LV_TEXT_ALIGN_CENTER, 0);
-    update_attempt_dots();
 
     // ── Teclado numérico ─────────────────────────────────────
     const char* labels[] = {"1","2","3","4","5","6","7","8","9"};
@@ -408,7 +292,7 @@ void pinpad_screen_show(lv_obj_t* from_screen, lv_scr_load_anim_t anim_type, uin
 {
     display_turn_on();
     lv_scr_load_anim(screen_pinpad, anim_type, duration, 0, false);
-    if (!lockedOut) reset_inactivity_timer();
+    reset_inactivity_timer();
 }
 
 void pinpad_set_success_callback(PinpadSuccessCallback cb)              { success_cb     = cb; }
@@ -434,43 +318,28 @@ std::string pinpad_get_pin(void)
     return pinCode.c_str();
 }
 
-void pinpad_set_correct_pin(const String& pin)
+void pinpad_set_pin_validator(PinValidatorCallback validator)
 {
-    correctPin = pin;
-    Serial.printf("[Pinpad] PIN actualizado\n");
+    pin_validator = validator;
+    Serial.println("[Pinpad] Validador de PIN registrado");
 }
 
 void pinpad_set_max_failed_attempts(int max)
 {
     maxFailedAttempts = (max < 1) ? 1 : max;
-    update_attempt_dots();
 }
 
-void pinpad_set_lockout_duration_ms(uint32_t ms)
-{
-    lockoutDurationMs = ms;
-}
+void pinpad_set_lockout_duration_ms(uint32_t ms) { /* sin lockout */ }
 
 void pinpad_reset_failed_attempts(void)
 {
     failedAttempts = 0;
-    if (lockedOut) {
-        if (lockout_timer) { lv_timer_del(lockout_timer); lockout_timer = nullptr; }
-        if (lockout_tick)  { lv_timer_del(lockout_tick);  lockout_tick  = nullptr; }
-        lockedOut = false;
-        if (label_status) {
-            lv_label_set_text(label_status, "Ingrese PIN");
-            lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-        }
-        if (label_nfc_hint) lv_obj_clear_flag(label_nfc_hint, LV_OBJ_FLAG_HIDDEN);
-    }
-    update_attempt_dots();
     Serial.println("[Pinpad] Intentos fallidos reseteados");
 }
 
 bool pinpad_is_locked_out(void)
 {
-    return lockedOut;
+    return false;  // lockout deshabilitado
 }
 
 void pinpad_show_status(const char* message, lv_color_t color)

@@ -3,7 +3,7 @@
  * @brief Persistencia NVS — guarda configuración entre reinicios
  *
  * Claves almacenadas (namespace "lock_cfg"):
- *   pin          → PIN correcto
+ *   creds_json   → array JSON de credenciales (contingencia sin internet)
  *   nfc_uid      → UID NFC autorizado (hex string)
  *   max_fail     → máximo intentos fallidos
  *   auto_lock    → delay auto-bloqueo (ms)
@@ -60,5 +60,10 @@ void   storage_set_tb_token(const char* token);
 // ── Contraseña del portal de configuración ───────
 String storage_get_ap_password(void);
 void   storage_set_ap_password(const char* pass);
+
+// ── Credenciales de acceso (JSON array desde TB) ─
+// Persiste el array completo para funcionar sin internet
+String storage_get_credentials(void);
+void   storage_set_credentials(const char* json);
 
 #endif // STORAGE_H

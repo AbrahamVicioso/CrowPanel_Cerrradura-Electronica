@@ -31,7 +31,11 @@ void pinpad_set_inactivity_callback(void (*callback)(void));
 // ── Control de PIN ───────────────────────────────────────────
 void        pinpad_reset(void);
 std::string pinpad_get_pin(void);
-void        pinpad_set_correct_pin(const String& pin);
+
+/** Registra la función que valida el PIN ingresado.
+ *  Debe devolver true si el PIN es correcto y vigente. */
+typedef bool (*PinValidatorCallback)(const String& pin);
+void        pinpad_set_pin_validator(PinValidatorCallback validator);
 
 // ── Lockout ──────────────────────────────────────────────────
 void pinpad_set_max_failed_attempts(int max);

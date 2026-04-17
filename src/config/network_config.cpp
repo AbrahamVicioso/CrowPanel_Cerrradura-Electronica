@@ -20,7 +20,7 @@ const char* THINGSBOARD_ACCESS_TOKEN = "l9qqivFbNcNxuO8lKgjZ";
 // ATRIBUTOS COMPARTIDOS ThingsBoard
 // ============================================
 const char* ATTR_LOCK_STATE        = "lockState";
-const char* ATTR_CORRECT_PIN       = "correctPin";
+const char* ATTR_CREDENTIALS       = "credenciales";
 const char* ATTR_AUTO_LOCK_DELAY   = "autoLockDelay";
 const char* ATTR_NFC_ENABLED       = "nfcEnabled";
 const char* ATTR_NFC_UID           = "authorizedNfcUid";
