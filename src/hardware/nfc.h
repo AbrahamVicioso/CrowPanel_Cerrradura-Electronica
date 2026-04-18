@@ -12,6 +12,9 @@
 // Longitud máxima del UID (7 bytes = NTAG/MIFARE Ultralight)
 #define NFC_UID_MAX_LENGTH 7
 
+// Longitud máxima del payload JSON leído desde tarjeta MIFARE
+#define MIFARE_JSON_MAX_LEN 256
+
 /**
  * @brief Datos de una tarjeta NFC leída
  */
@@ -58,5 +61,19 @@ String nfc_uid_to_string(const NfcTag* tag);
  * @brief Imprime el UID al Serial
  */
 void nfc_print_uid(uint8_t* uid, uint8_t uidLength);
+
+/**
+ * @brief Lee el payload JSON desde una tarjeta MIFARE Classic 1K.
+ *
+ * Estrategia fail-fast: autentica sector a sector con la llave NDEF estándar
+ * (0xD3,0xF7,...) y detiene el bucle en cuanto encuentra el cierre del JSON.
+ * Salta automáticamente los trailer blocks (cada bloque %4==3).
+ *
+ * @param tag     Tarjeta detectada previamente por nfc_read_tag()
+ * @param buffer  Buffer donde almacenar el JSON (terminado en '\0')
+ * @param maxLen  Tamaño máximo del buffer (recomendado: MIFARE_JSON_MAX_LEN)
+ * @return true si se extrajo un JSON completo y válido
+ */
+bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen);
 
 #endif // NFC_H

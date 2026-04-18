@@ -15,6 +15,7 @@
 #include <lvgl.h>
 #include <Wire.h>
 #include <WiFi.h>
+#include <ArduinoJson.h>
 
 #include "config/config.h"
 #include "config/pins.h"
@@ -365,24 +366,50 @@ void on_rpc_reset_lockout(void)
 
 void nfc_check_timer_cb(lv_timer_t* timer)
 {
-    if (!nfc_enabled)        return;
-    if (screen_busy)         return;
-    if (is_unlocking)        return;
+    if (!nfc_enabled)           return;
+    if (screen_busy)            return;
+    if (is_unlocking)           return;
     if (pinpad_is_locked_out()) return;
 
     NfcTag tag;
-    if (nfc_read_tag(&tag)) {
-        if (nfc_is_authorized(&tag)) {
-            Serial.println("[Main] NFC autorizado");
-            do_unlock("nfc");
-        } else {
-            Serial.println("[Main] NFC rechazado — UID no autorizado");
-            thingsboard_publish_access_event(false, "nfc");
+    if (!nfc_read_tag(&tag)) return;
 
-            // Mostrar feedback de rechazo en pinpad si está activo
-            if (lv_scr_act() == screen_pinpad) {
-                pinpad_show_status("Tarjeta no autorizada", COLOR_ERROR);
+    // ── Intento 1: JSON payload en tarjeta MIFARE Classic ───────
+    static char json_buf[MIFARE_JSON_MAX_LEN];
+    if (nfc_read_json_payload(&tag, json_buf, sizeof(json_buf))) {
+        StaticJsonDocument<512> doc;
+        DeserializationError err = deserializeJson(doc, json_buf);
+        if (!err) {
+            // Soporta tanto huéspedes como personal: ambos usan "credencial"→"pin"
+            const char* rawPin = doc["credencial"]["pin"];
+            if (rawPin && strlen(rawPin) > 0) {
+                String extractedPin = String(rawPin);
+                Serial.printf("[NFC] PIN leído de tarjeta MIFARE (%u chars)\n",
+                              extractedPin.length());
+                if (credentials_validate_pin(extractedPin)) {
+                    Serial.println("[NFC] PIN en tarjeta válido — desbloqueando");
+                    do_unlock("nfc_json");
+                } else {
+                    Serial.println("[NFC] PIN en tarjeta no válido o expirado");
+                    thingsboard_publish_access_event(false, "nfc_json");
+                    if (lv_scr_act() == screen_pinpad) {
+                        pinpad_show_status("Credencial no válida", COLOR_ERROR);
+                    }
+                }
+                return;  // No continuar con chequeo de UID
             }
+        }
+    }
+
+    // ── Intento 2 (fallback): verificación por UID ───────────────
+    if (nfc_is_authorized(&tag)) {
+        Serial.println("[Main] NFC autorizado (UID)");
+        do_unlock("nfc");
+    } else {
+        Serial.println("[Main] NFC rechazado — UID no autorizado");
+        thingsboard_publish_access_event(false, "nfc");
+        if (lv_scr_act() == screen_pinpad) {
+            pinpad_show_status("Tarjeta no autorizada", COLOR_ERROR);
         }
     }
 }

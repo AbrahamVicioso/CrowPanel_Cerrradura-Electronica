@@ -98,8 +98,8 @@ bool nfc_is_authorized(const NfcTag* tag)
 {
     if (!tag || !tag->valid) return false;
 
-    // Sin UID configurado → aceptar cualquier tarjeta
-    if (strlen(authorized_uid) == 0) return true;
+    // Sin UID configurado → RECHAZAR por defecto (para obligar a usar el JSON o configurar un UID explicitamente)
+    if (strlen(authorized_uid) == 0) return false;
 
     // Convertir UID leído a string sin separadores
     String tagStr = "";
@@ -147,4 +147,79 @@ void nfc_print_uid(uint8_t* uid, uint8_t uidLength)
         Serial.print(uid[i], HEX);
     }
     Serial.println();
+}
+
+// ────────────────────────────────────────────────────────────
+//  Lectura JSON desde MIFARE Classic 1K
+// ────────────────────────────────────────────────────────────
+
+bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen)
+{
+    if (!tag || !tag->valid || !buffer || maxLen < 2) return false;
+
+    // Llave estándar NFC Forum para sectores NDEF (sectores 1-15)
+    uint8_t ndefKey[6] = { 0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7 };
+
+    uint16_t bufPos    = 0;
+    bool     started   = false;  // ¿Se encontró el primer '{'?
+    int      depth     = 0;      // Profundidad de anidamiento de llaves
+
+    // Empezar desde el bloque 4 (sector 1).
+    // Sector 0 (bloques 0-3): fabricante + MAD, no contiene datos NDEF útiles.
+    // MIFARE Classic 1K: 64 bloques totales (0-63).
+    // Trailer blocks (llaves): bloques 3, 7, 11, 15, … → bloque%4==3 → saltar.
+    for (uint8_t block = 4; block < 64 && bufPos < (uint16_t)(maxLen - 1); block++) {
+
+        // Saltar trailer block
+        if ((block % 4) == 3) continue;
+
+        // Al entrar a un nuevo sector, autenticar con llave NDEF
+        if ((block % 4) == 0) {
+            bool auth = nfc.mifareclassic_AuthenticateBlock(
+                (uint8_t*)tag->uid, tag->uidLength,
+                block, 0 /*key A*/, ndefKey);
+            if (!auth) {
+                // Fallo de autenticación: tarjeta retirada o fin de datos
+                Serial.printf("[NFC] Auth falló en bloque %d\n", block);
+                break;
+            }
+        }
+
+        uint8_t blockData[16];
+        if (!nfc.mifareclassic_ReadDataBlock(block, blockData)) {
+            Serial.printf("[NFC] Read falló en bloque %d\n", block);
+            break;
+        }
+
+        // Procesar los 16 bytes del bloque
+        for (int i = 0; i < 16 && bufPos < (uint16_t)(maxLen - 1); i++) {
+            uint8_t c = blockData[i];
+
+            if (!started) {
+                // Descartar metadata NDEF hasta encontrar el primer '{'
+                if (c == '{') {
+                    started = true;
+                    depth   = 1;
+                    buffer[bufPos++] = c;
+                }
+                continue;
+            }
+
+            // JSON en progreso: rastrear profundidad de llaves
+            if      (c == '{') depth++;
+            else if (c == '}') depth--;
+
+            buffer[bufPos++] = c;
+
+            if (depth == 0) {
+                // JSON completo — salir inmediatamente (fail-fast)
+                buffer[bufPos] = '\0';
+                Serial.printf("[NFC] JSON extraído (%u bytes)\n", bufPos);
+                return true;
+            }
+        }
+    }
+
+    // El bucle terminó sin encontrar JSON completo
+    return false;
 }
