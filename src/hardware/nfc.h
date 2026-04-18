@@ -24,6 +24,7 @@
 typedef struct {
     uint8_t uid[NFC_UID_MAX_LENGTH];
     uint8_t uidLength;
+    uint8_t sak;   // SEL_RES: 0x08=MIFARE Classic 1K, 0x20/0x28=ISO-DEP (HCE/phone)
     bool    valid;
 } NfcTag;
 

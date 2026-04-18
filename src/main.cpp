@@ -384,16 +384,21 @@ void nfc_check_timer_cb(lv_timer_t* timer)
     bool        jsonOk    = false;
     const char* nfcMethod = nullptr;
 
-    // ── Intento 1: HCE (smartphone con app) ─────────────────────
-    if (nfc_read_hce_payload(json_buf, sizeof(json_buf))) {
-        jsonOk    = true;
-        nfcMethod = "nfc_hce";
+    // SAK routing: evita intentar el método incorrecto en cada tipo de dispositivo
+    if (tag.sak == 0x20 || tag.sak == 0x28) {
+        // ── ISO-DEP (smartphone HCE) ─────────────────────────────
+        if (nfc_read_hce_payload(json_buf, sizeof(json_buf))) {
+            jsonOk    = true;
+            nfcMethod = "nfc_hce";
+        }
+    } else if (tag.sak == 0x08 || tag.sak == 0x18) {
+        // ── MIFARE Classic 1K / 4K ───────────────────────────────
+        if (nfc_read_json_payload(&tag, json_buf, sizeof(json_buf))) {
+            jsonOk    = true;
+            nfcMethod = "nfc_json";
+        }
     }
-    // ── Intento 2: JSON en bloques MIFARE Classic ────────────────
-    else if (nfc_read_json_payload(&tag, json_buf, sizeof(json_buf))) {
-        jsonOk    = true;
-        nfcMethod = "nfc_json";
-    }
+    // SAK desconocido: sin intento de JSON → cae directo al chequeo de UID
 
     // ── Procesar JSON (HCE o MIFARE) ────────────────────────────
     if (jsonOk) {

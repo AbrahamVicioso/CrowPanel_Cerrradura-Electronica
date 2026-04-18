@@ -60,10 +60,16 @@ bool nfc_read_tag(NfcTag* tag)
 
     tag->uidLength = (uint8_t)min((int)uidLength, (int)NFC_UID_MAX_LENGTH);
     memcpy(tag->uid, uid, tag->uidLength);
+    tag->sak   = nfc._lastSAK;
     tag->valid = true;
 
-    Serial.print("[NFC] Tarjeta detectada! UID: ");
+    Serial.printf("[NFC] Detectado — UID: ");
     nfc_print_uid(uid, uidLength);
+    Serial.printf("[NFC] SAK: 0x%02X (%s)\n", tag->sak,
+        (tag->sak == 0x20 || tag->sak == 0x28) ? "ISO-DEP/HCE" :
+        (tag->sak == 0x08)                      ? "MIFARE Classic 1K" :
+        (tag->sak == 0x18)                      ? "MIFARE Classic 4K" :
+        (tag->sak == 0x00)                      ? "MIFARE Ultralight" : "Desconocido");
 
     return true;
 }
