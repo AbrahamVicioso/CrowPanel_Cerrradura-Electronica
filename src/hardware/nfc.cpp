@@ -150,6 +150,54 @@ void nfc_print_uid(uint8_t* uid, uint8_t uidLength)
 }
 
 // ────────────────────────────────────────────────────────────
+//  Lectura JSON via HCE (smartphone)
+// ────────────────────────────────────────────────────────────
+
+bool nfc_read_hce_payload(char* buffer, uint16_t maxLen)
+{
+    if (!buffer || maxLen < 2) return false;
+
+    // Construir APDU SELECT AID: CLA INS P1 P2 Lc [AID bytes]
+    uint8_t aid[] = HCE_AID;
+    const uint8_t aidLen = sizeof(aid);
+
+    uint8_t cmd[5 + aidLen];
+    cmd[0] = 0x00;   // CLA
+    cmd[1] = 0xA4;   // INS: SELECT FILE
+    cmd[2] = 0x04;   // P1: select by AID
+    cmd[3] = 0x00;   // P2: primera ocurrencia
+    cmd[4] = aidLen; // Lc: longitud del AID
+    memcpy(&cmd[5], aid, aidLen);
+
+    uint8_t response[255];
+    uint8_t respLen = sizeof(response);
+
+    if (!nfc.inDataExchange(cmd, sizeof(cmd), response, &respLen)) {
+        // La tarjeta/dispositivo no responde a APDUs — no es HCE
+        return false;
+    }
+
+    // Verificar Status Word: últimos 2 bytes deben ser 90 00
+    if (respLen < 2 || response[respLen - 2] != 0x90 || response[respLen - 1] != 0x00) {
+        Serial.printf("[NFC] HCE SW inválido: %02X %02X\n",
+                      respLen >= 2 ? response[respLen - 2] : 0,
+                      respLen >= 1 ? response[respLen - 1] : 0);
+        return false;
+    }
+
+    // Extraer cuerpo JSON (todo antes del SW)
+    uint8_t jsonLen = respLen - 2;
+    if (jsonLen == 0) return false;
+
+    uint16_t copyLen = (jsonLen < maxLen - 1) ? jsonLen : (maxLen - 1);
+    memcpy(buffer, response, copyLen);
+    buffer[copyLen] = '\0';
+
+    Serial.printf("[NFC] HCE payload recibido (%u bytes)\n", copyLen);
+    return true;
+}
+
+// ────────────────────────────────────────────────────────────
 //  Lectura JSON desde MIFARE Classic 1K
 // ────────────────────────────────────────────────────────────
 

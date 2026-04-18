@@ -380,25 +380,36 @@ void nfc_check_timer_cb(lv_timer_t* timer)
     NfcTag tag;
     if (!nfc_read_tag(&tag)) return;
 
-    // ── Intento 1: JSON payload en tarjeta MIFARE Classic ───────
     static char json_buf[MIFARE_JSON_MAX_LEN];
-    if (nfc_read_json_payload(&tag, json_buf, sizeof(json_buf))) {
+    bool        jsonOk    = false;
+    const char* nfcMethod = nullptr;
+
+    // ── Intento 1: HCE (smartphone con app) ─────────────────────
+    if (nfc_read_hce_payload(json_buf, sizeof(json_buf))) {
+        jsonOk    = true;
+        nfcMethod = "nfc_hce";
+    }
+    // ── Intento 2: JSON en bloques MIFARE Classic ────────────────
+    else if (nfc_read_json_payload(&tag, json_buf, sizeof(json_buf))) {
+        jsonOk    = true;
+        nfcMethod = "nfc_json";
+    }
+
+    // ── Procesar JSON (HCE o MIFARE) ────────────────────────────
+    if (jsonOk) {
         StaticJsonDocument<512> doc;
         DeserializationError err = deserializeJson(doc, json_buf);
         if (!err) {
-            // Soporta tanto huéspedes como personal: ambos usan "credencial"→"pin"
             const char* rawPin = doc["credencial"]["pin"];
             if (rawPin && strlen(rawPin) > 0) {
                 String extractedPin = String(rawPin);
-                Serial.printf("[NFC] PIN leído de tarjeta MIFARE (%u chars)\n",
-                              extractedPin.length());
+                Serial.printf("[NFC] PIN extraído via %s\n", nfcMethod);
                 if (credentials_validate_pin(extractedPin)) {
-                    Serial.println("[NFC] PIN en tarjeta válido — desbloqueando");
-                    do_unlock("nfc_json");
+                    Serial.printf("[NFC] PIN válido — desbloqueando via %s\n", nfcMethod);
+                    do_unlock(nfcMethod);
                 } else {
-                    Serial.println("[NFC] PIN en tarjeta no válido o expirado");
-                    thingsboard_publish_access_event(false, "nfc_json");
-                    
+                    Serial.println("[NFC] PIN no válido o expirado");
+                    thingsboard_publish_access_event(false, nfcMethod);
                     if (!screen_busy) {
                         screen_busy = true;
                         display_turn_on();
@@ -410,14 +421,13 @@ void nfc_check_timer_cb(lv_timer_t* timer)
         }
     }
 
-    // ── Intento 2 (fallback): verificación por UID ───────────────
+    // ── Intento 3: verificación por UID estático ─────────────────
     if (nfc_is_authorized(&tag)) {
         Serial.println("[Main] NFC autorizado (UID)");
         do_unlock("nfc");
     } else {
-        Serial.println("[Main] NFC rechazado — UID no autorizado");
+        Serial.println("[Main] NFC rechazado");
         thingsboard_publish_access_event(false, "nfc");
-        
         if (!screen_busy) {
             screen_busy = true;
             display_turn_on();

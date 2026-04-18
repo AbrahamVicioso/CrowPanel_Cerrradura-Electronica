@@ -12,8 +12,11 @@
 // Longitud máxima del UID (7 bytes = NTAG/MIFARE Ultralight)
 #define NFC_UID_MAX_LENGTH 7
 
-// Longitud máxima del payload JSON leído desde tarjeta MIFARE
+// Longitud máxima del payload JSON leído desde tarjeta MIFARE o HCE
 #define MIFARE_JSON_MAX_LEN 256
+
+// AID (Application Identifier) de la app móvil HCE
+#define HCE_AID { 0xF0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 }
 
 /**
  * @brief Datos de una tarjeta NFC leída
@@ -75,5 +78,19 @@ void nfc_print_uid(uint8_t* uid, uint8_t uidLength);
  * @return true si se extrajo un JSON completo y válido
  */
 bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen);
+
+/**
+ * @brief Lee el payload JSON desde un smartphone con HCE (Host Card Emulation).
+ *
+ * Envía un APDU SELECT AID al dispositivo detectado. Si responde con SW 9000,
+ * el cuerpo de la respuesta se copia al buffer como JSON terminado en '\0'.
+ * En tarjetas MIFARE Classic (que no soportan ISO-DEP) el comando falla
+ * rápidamente sin bloquear el bus.
+ *
+ * @param buffer  Buffer de salida para el JSON
+ * @param maxLen  Tamaño máximo del buffer (recomendado: MIFARE_JSON_MAX_LEN)
+ * @return true si se recibió un payload JSON válido con SW 9000
+ */
+bool nfc_read_hce_payload(char* buffer, uint16_t maxLen);
 
 #endif // NFC_H
