@@ -224,10 +224,96 @@ void on_remote_state_change(bool locked)
     }
 }
 
+// ============================================
+// TOAST — CREDENCIALES ACTUALIZADAS
+// ============================================
+
+static void credentials_toast_fade_out_cb(lv_timer_t* t)
+{
+    lv_obj_t* toast = (lv_obj_t*)t->user_data;
+    lv_timer_del(t);
+
+    if (!toast || !lv_obj_is_valid(toast)) return;
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, toast);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+    lv_anim_set_time(&a, 400);
+    lv_anim_set_exec_cb(&a, [](void* obj, int32_t v){
+        if (lv_obj_is_valid((lv_obj_t*)obj))
+            lv_obj_set_style_opa((lv_obj_t*)obj, (lv_opa_t)v, 0);
+    });
+    lv_anim_set_deleted_cb(&a, [](lv_anim_t* a2){
+        lv_obj_t* obj = (lv_obj_t*)a2->var;
+        if (lv_obj_is_valid(obj)) lv_obj_del(obj);
+    });
+    lv_anim_start(&a);
+}
+
+static void show_credentials_toast(int count)
+{
+    // Panel flotante sobre cualquier pantalla
+    lv_obj_t* toast = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(toast, 480, 80);
+    lv_obj_align(toast, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_set_style_bg_color(toast, lv_color_hex(0x00b894), 0);  // COLOR_SUCCESS
+    lv_obj_set_style_bg_opa(toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(toast, 20, 0);
+    lv_obj_set_style_border_width(toast, 0, 0);
+    lv_obj_set_style_shadow_width(toast, 24, 0);
+    lv_obj_set_style_shadow_color(toast, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_shadow_opa(toast, LV_OPA_30, 0);
+    lv_obj_set_style_pad_all(toast, 0, 0);
+    lv_obj_clear_flag(toast, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_opa(toast, LV_OPA_TRANSP, 0);  // empieza invisible
+
+    // Ícono
+    lv_obj_t* icon = lv_label_create(toast);
+    lv_label_set_text(icon, LV_SYMBOL_REFRESH);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+    lv_obj_align(icon, LV_ALIGN_LEFT_MID, 24, 0);
+
+    // Texto principal
+    lv_obj_t* lbl = lv_label_create(toast);
+    lv_label_set_text(lbl, "Credenciales actualizadas");
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 62, -10);
+
+    // Subtexto con cantidad
+    lv_obj_t* sub = lv_label_create(toast);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%d credencial%s activa%s",
+             count, count == 1 ? "" : "es", count == 1 ? "" : "s");
+    lv_label_set_text(sub, buf);
+    lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(sub, lv_color_hex(0xdfe6e9), 0);
+    lv_obj_align(sub, LV_ALIGN_LEFT_MID, 62, 12);
+
+    // Fade in
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, toast);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_time(&a, 300);
+    lv_anim_set_exec_cb(&a, [](void* obj, int32_t v){
+        if (lv_obj_is_valid((lv_obj_t*)obj))
+            lv_obj_set_style_opa((lv_obj_t*)obj, (lv_opa_t)v, 0);
+    });
+    lv_anim_start(&a);
+
+    // Auto-cerrar con fade out después de 3.5s
+    lv_timer_t* t = lv_timer_create(credentials_toast_fade_out_cb, 3500, toast);
+    lv_timer_set_repeat_count(t, 1);
+}
+
 void on_credentials_update(const char* json)
 {
     Serial.println("[Main] Credenciales recibidas desde TB");
     credentials_update(json);
+    show_credentials_toast(credentials_get_count());
 }
 
 void on_auto_lock_delay_update(uint32_t delayMs)

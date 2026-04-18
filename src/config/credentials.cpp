@@ -2,8 +2,9 @@
  * @file credentials.cpp
  * @brief Implementación del módulo de credenciales.
  *
- * Parsea el array JSON del atributo "credenciales" de ThingsBoard y valida
- * PINs contra ventanas de tiempo en UTC, sin depender del timezone del sistema.
+ * Parsea el objeto JSON {"huespedes":[...],"personal":[...]} desde ThingsBoard.
+ * Cada persona tiene un array "credenciales" con pin, activacion, expiracion (UTC).
+ * Usa DynamicJsonDocument (16KB heap DRAM) para soportar payloads de tamaño moderado-grande.
  */
 
 #include "credentials.h"
@@ -19,6 +20,7 @@ struct Credential {
     char   pin[16];
     time_t activacion;  // 0 = sin restricción de inicio
     time_t expiracion;  // 0 = nunca expira
+    char   tipo;        // 'H' = huesped, 'P' = personal
 };
 
 static Credential s_creds[MAX_CREDENTIALS];
@@ -62,10 +64,40 @@ static void fmt_time(time_t t, char* buf, size_t len)
 {
     if (t == 0) { snprintf(buf, len, "(sin fecha)"); return; }
     struct tm* tm = gmtime(&t);
-    if (tm) snprintf(buf, len, "%04d-%02d-%02dT%02d:%02d:%02d UTC",
+    if (tm) snprintf(buf, len, "%04d-%02d-%02dT%02d:%02d:%02d",
         tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
         tm->tm_hour, tm->tm_min, tm->tm_sec);
     else snprintf(buf, len, "(%ld)", (long)t);
+}
+
+/**
+ * Extrae credenciales de un JsonArray "credenciales" y las añade a s_creds.
+ * @param arr   Array de objetos {pin, activacion, expiracion}
+ * @param tipo  'H' o 'P'
+ * @return      Número de credenciales añadidas
+ */
+static int load_credentials_array(JsonArrayConst arr, char tipo)
+{
+    int added = 0;
+    for (JsonVariantConst elem : arr) {
+        JsonObjectConst cred = elem.as<JsonObjectConst>();
+        if (cred.isNull()) continue;
+        if (s_count >= MAX_CREDENTIALS) break;
+
+        const char* pin = cred["pin"] | "";
+        if (pin[0] == '\0') continue;  // saltar credenciales sin PIN
+
+        Credential& c = s_creds[s_count];
+        strncpy(c.pin, pin, sizeof(c.pin) - 1);
+        c.pin[sizeof(c.pin) - 1] = '\0';
+        c.activacion = parse_iso8601(cred["activacion"] | "");
+        c.expiracion = parse_iso8601(cred["expiracion"] | "");
+        c.tipo = tipo;
+
+        s_count++;
+        added++;
+    }
+    return added;
 }
 
 // ============================================
@@ -74,65 +106,74 @@ static void fmt_time(time_t t, char* buf, size_t len)
 
 bool credentials_update(const char* json)
 {
-    DynamicJsonDocument doc(2048);
+    // 16KB en heap DRAM — suficiente para decenas de huéspedes/personal
+    DynamicJsonDocument doc(16384);
     DeserializationError err = deserializeJson(doc, json);
     if (err) {
         Serial.printf("[Creds] Error parse JSON: %s\n", err.c_str());
         return false;
     }
 
-    JsonArray arr = doc.as<JsonArray>();
-    if (arr.isNull()) {
-        Serial.println("[Creds] El valor de 'credenciales' no es un array");
-        return false;
-    }
-
     s_count = 0;
-    char tbuf1[32], tbuf2[32];
+    int n_huespedes = 0, n_personal = 0;
+    int c_huespedes = 0, c_personal = 0;
 
-    for (JsonObject obj : arr) {
-        if (s_count >= MAX_CREDENTIALS) break;
-
-        const char* pin  = obj["pin"]  | (const char*)nullptr;
-        const char* tipo = obj["tipo"] | "?";
-
-        Credential& c = s_creds[s_count];
-
-        // Guardar PIN (vacío si no tiene)
-        if (pin && pin[0] != '\0') {
-            strncpy(c.pin, pin, sizeof(c.pin) - 1);
-            c.pin[sizeof(c.pin) - 1] = '\0';
-        } else {
-            c.pin[0] = '\0';
+    // ── Huéspedes ──────────────────────────────────────────
+    JsonArrayConst huespedes = doc["huespedes"].as<JsonArrayConst>();
+    if (!huespedes.isNull()) {
+        for (JsonVariantConst hv : huespedes) {
+            JsonObjectConst h = hv.as<JsonObjectConst>();
+            if (h.isNull()) continue;
+            n_huespedes++;
+            JsonArrayConst creds = h["credenciales"].as<JsonArrayConst>();
+            if (!creds.isNull()) {
+                c_huespedes += load_credentials_array(creds, 'H');
+            }
         }
-
-        if (strcmp(tipo, "huesped") == 0) {
-            c.activacion = parse_iso8601(obj["activacion"] | "");
-            c.expiracion = parse_iso8601(obj["expiracion"] | "");
-        } else {
-            c.activacion = 0;
-            JsonVariant expVar = obj["expiracion"];
-            c.expiracion = expVar.isNull() ? 0 : parse_iso8601(expVar.as<const char*>());
-        }
-
-        s_count++;
     }
 
-    // Persistir JSON en NVS para operar sin internet
+    // ── Personal ───────────────────────────────────────────
+    JsonArrayConst personal = doc["personal"].as<JsonArrayConst>();
+    if (!personal.isNull()) {
+        for (JsonVariantConst pv : personal) {
+            JsonObjectConst p = pv.as<JsonObjectConst>();
+            if (p.isNull()) continue;
+            n_personal++;
+            JsonArrayConst creds = p["credenciales"].as<JsonArrayConst>();
+            if (!creds.isNull()) {
+                c_personal += load_credentials_array(creds, 'P');
+            }
+        }
+    }
+
+    if (s_count == 0) {
+        Serial.println("[Creds] WARN: JSON parseado pero sin PINs válidos");
+    }
+
+    // Persistir en SPIFFS para operar sin internet
     storage_set_credentials(json);
 
-    // Mostrar lista en serial
-    Serial.println("[Creds] ────────────────────────────────────────────");
-    Serial.printf( "[Creds] %d credenciales cargadas:\n", s_count);
+    // ── Log en serial ──────────────────────────────────────
+    char tbuf1[32], tbuf2[32];
+    Serial.println("[Creds] ─────────────────────────────────────────────────");
+    Serial.printf( "[Creds] Huéspedes: %d persona(s) → %d PIN(s)\n", n_huespedes, c_huespedes);
     for (int i = 0; i < s_count; i++) {
+        if (s_creds[i].tipo != 'H') continue;
         fmt_time(s_creds[i].activacion, tbuf1, sizeof(tbuf1));
         fmt_time(s_creds[i].expiracion, tbuf2, sizeof(tbuf2));
-        Serial.printf("[Creds]  #%d  pin=%-8s  activa=%-30s  expira=%s\n",
-                      i + 1,
-                      s_creds[i].pin[0] ? s_creds[i].pin : "(sin pin)",
-                      tbuf1, tbuf2);
+        Serial.printf("[Creds]  H  pin=%-8s  desde=%-20s  hasta=%s\n",
+                      s_creds[i].pin, tbuf1, tbuf2);
     }
-    Serial.println("[Creds] ────────────────────────────────────────────");
+    Serial.printf( "[Creds] Personal:  %d persona(s) → %d PIN(s)\n", n_personal, c_personal);
+    for (int i = 0; i < s_count; i++) {
+        if (s_creds[i].tipo != 'P') continue;
+        fmt_time(s_creds[i].activacion, tbuf1, sizeof(tbuf1));
+        fmt_time(s_creds[i].expiracion, tbuf2, sizeof(tbuf2));
+        Serial.printf("[Creds]  P  pin=%-8s  desde=%-20s  hasta=%s\n",
+                      s_creds[i].pin, tbuf1, tbuf2);
+    }
+    Serial.printf( "[Creds] Total: %d PIN(s) cargados\n", s_count);
+    Serial.println("[Creds] ─────────────────────────────────────────────────");
 
     return true;
 }
@@ -150,7 +191,7 @@ bool credentials_validate_pin(const String& pin)
     if (ntp_ok) {
         char nowbuf[32];
         fmt_time(now, nowbuf, sizeof(nowbuf));
-        Serial.printf("[Creds] Hora actual: %s\n", nowbuf);
+        Serial.printf("[Creds] Validando PIN, hora UTC: %s\n", nowbuf);
     } else {
         Serial.printf("[Creds] WARN: NTP no sincronizado (now=%ld)\n", (long)now);
     }
@@ -160,7 +201,8 @@ bool credentials_validate_pin(const String& pin)
     for (int i = 0; i < s_count; i++) {
         if (pin != s_creds[i].pin) continue;
 
-        Serial.printf("[Creds] PIN coincide con credencial #%d\n", i + 1);
+        Serial.printf("[Creds] PIN coincide con credencial #%d (%c)\n",
+                      i + 1, s_creds[i].tipo);
 
         // Sin NTP: omitir validación temporal y permitir acceso
         if (!ntp_ok) {

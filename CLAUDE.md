@@ -323,26 +323,42 @@ void loop() {
 ```cpp
 // Atributos suscritos (7 total)
 static const char* ATTR_LOCK_STATE = "lockState";
-static const char* ATTR_CREDENTIALS = "credenciales";   // array JSON
+static const char* ATTR_CREDENTIALS = "credenciales";   // objeto JSON con huespedes + personal
 static const char* ATTR_AUTO_LOCK_DELAY = "autoLockDelay";
 static const char* ATTR_NFC_ENABLED = "nfcEnabled";
-static const char* ATTR_AUTHORIZED_NFC_UID = "authorizedNfcUid";
-static const char* ATTR_MAX_FAILED_ATTEMPTS = "maxFailedAttempts";
+static const char* ATTR_NFC_UID = "authorizedNfcUid";
+static const char* ATTR_MAX_FAILED = "maxFailedAttempts";
 static const char* ATTR_LOCKOUT_DURATION = "lockoutDuration";
+```
 
-// Callback único para todos los atributos
-static void processSharedAttributes(const JsonObjectConst& data) {
-    if (data.containsKey(ATTR_LOCK_STATE)) {
-        bool shouldLock = (strcmp(data[ATTR_LOCK_STATE], "locked") == 0);
-        stateChangeCb(shouldLock);
+### Estructura del atributo "credenciales"
+```json
+{
+  "huespedes": [
+    {
+      "huespedId": 1, "reservaId": 3002,
+      "credenciales": [
+        {"pin":"142820","activacion":"2026-04-17T22:54:18","expiracion":"2026-04-18T18:53:00"}
+      ]
     }
-    if (data.containsKey(ATTR_CREDENTIALS)) {
-        String json; serializeJson(data[ATTR_CREDENTIALS], json);
-        credentialsUpdateCb(json.c_str());  // → credentials_update()
+  ],
+  "personal": [
+    {
+      "personalId": 1, "nombre": "Abraham Vicioso",
+      "credenciales": [
+        {"pin":"805714","activacion":"2026-04-18T00:31:00","expiracion":"2026-05-01T00:31:00"}
+      ]
     }
-    // ... procesar otros atributos
+  ]
 }
 ```
+- Cada PIN tiene `activacion` y `expiracion` (UTC ISO 8601)
+- El parse en `credentials.cpp` usa `DynamicJsonDocument(16384)` en DRAM + algoritmo Hinnant para UTC sin mktime
+- **NO usar `#include <esp_heap_caps.h>`** — es header pesado IDF que causa CreateProcess en Windows MSYS2
+- TB puede enviar el valor como string escapado o como JSON nativo — ambos soportados
+- Constructor ThingsBoard: `ThingsBoardSized<64> tb(mqttClient, receive=8192, send=256, ...)` — receive PRIMERO, send SEGUNDO (orden fácil de confundir)
+- Receive buffer 8192: soporta JSON de credenciales grandes sin truncamiento
+- **REGLA**: iteración sobre JsonArrayConst → usar `for (JsonVariantConst v : arr)` + `v.as<JsonObjectConst>()` explícito (la conversión implícita `for (JsonObjectConst obj : arr)` puede silenciosamente retornar null en ArduinoJson 6.21.5)
 
 ### RPC Server-side (Control Remoto)
 ```cpp
@@ -471,15 +487,20 @@ bool nfc_is_authorized(const NfcTag* tag) {
 }
 ```
 
-## 💾 Sistema de Almacenamiento (NVS)
+## 💾 Sistema de Almacenamiento
 
-### Namespace y Claves NVS (storage.cpp)
-Namespace: `"lock_cfg"` (no `"lock_config"`)
+### Credenciales — NVS blob (`"creds"`)
+Las credenciales se guardan como blob NVS usando `putBytes`/`getBytes` (ya disponible en `Preferences.h`).
+- `storage_set_credentials(json)` → `prefs.putBytes("creds", json, len)`
+- `storage_get_credentials()` → `prefs.getBytes("creds", buf, len)` → `String`
+- Límite práctico: ~14 KB (partición NVS 20 KB minus overhead)
+- **NO usar `#include <SPIFFS.h>`** en storage.cpp — es header pesado que LDF agrega a TODOS los archivos fuente, alargando las líneas de comando de SCons más allá del límite de Windows CreateProcess
 
-Claves reales (strings literales en storage.cpp, sin `#define`):
+### Configuración — NVS
+Namespace: `"lock_cfg"` (Preferences library)
+
 | Clave NVS    | Función                              |
 |--------------|--------------------------------------|
-| `"creds_json"`| Array JSON completo de credenciales (contingencia offline) |
 | `"nfc_uid"`  | UID NFC autorizado (hex string)      |
 | `"max_fail"` | Máx. intentos fallidos (int)         |
 | `"auto_lock"`| Delay auto-bloqueo ms (uint)         |
@@ -494,12 +515,13 @@ Claves reales (strings literales en storage.cpp, sin `#define`):
 ### Funciones de Storage
 ```cpp
 void storage_init() {
-    prefs.begin("lock_cfg", false);  // namespace real
+    prefs.begin("lock_cfg", false);
+    SPIFFS.begin(true);  // monta partición spiffs
 }
 
 String storage_get_pin() {
     return prefs.getString("pin", DEFAULT_PIN);
-}
+}  // PIN legacy — las credenciales reales vienen de SPIFFS/TB
 
 void storage_set_pin(const char* pin) {
     prefs.putString("pin", pin);

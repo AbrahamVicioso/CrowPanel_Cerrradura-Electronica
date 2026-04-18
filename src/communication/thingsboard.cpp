@@ -37,8 +37,10 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
     &serverSideRPC
 };
 
-// Buffer envío 256 bytes, recepción 1024 bytes (suficiente para array credenciales ~450 bytes)
-static ThingsBoardSized<64> tb(mqttClient, 256, 1024, Default_Max_Stack_Size, apis);
+// Constructor: (client, receive_buffer, send_buffer, max_stack, apis)
+// receive=8192 para soportar JSON de credenciales grandes (~700-2000 bytes)
+// send=256 suficiente para telemetría y atributos pequeños
+static ThingsBoardSized<64> tb(mqttClient, 8192, 256, Default_Max_Stack_Size, apis);
 
 // ============================================
 // ESTADO INTERNO
@@ -90,7 +92,14 @@ static void processSharedAttributes(const JsonObjectConst& data)
     // ── credenciales ─────────────────────────────────────────
     if (data.containsKey(ATTR_CREDENTIALS)) {
         String json;
-        serializeJson(data[ATTR_CREDENTIALS], json);
+        JsonVariantConst val = data[ATTR_CREDENTIALS];
+        if (val.is<const char*>()) {
+            // TB envió el valor como string — usar directamente
+            json = val.as<const char*>();
+        } else {
+            // TB envió como array/objeto nativo JSON
+            serializeJson(val, json);
+        }
         Serial.printf("  credenciales recibidas (%d bytes)\n", json.length());
         if (credentialsUpdateCb) credentialsUpdateCb(json.c_str());
     }

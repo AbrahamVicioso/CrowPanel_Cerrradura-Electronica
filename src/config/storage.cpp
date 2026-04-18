@@ -7,16 +7,13 @@
 #include "config.h"
 #include "network_config.h"
 #include <Preferences.h>
-#include <esp_log.h>
 
 static Preferences prefs;
 
 void storage_init(void)
 {
-    // Suprimir mensajes verbose de Preferences (NOT_FOUND en primer arranque)
-    esp_log_level_set("Preferences", ESP_LOG_NONE);
     prefs.begin("lock_cfg", false);
-    Serial.println("Storage NVS inicializado");
+    Serial.println("[Storage] NVS inicializado");
 }
 
 // ── PIN ─────────────────────────────────────────
@@ -133,16 +130,29 @@ void storage_set_tb_token(const char* token)
     Serial.println("TB token guardado");
 }
 
-// ── Credenciales de acceso (JSON completo) ───────
+// ── Credenciales de acceso (NVS blob) ────────────
+// Usa putBytes/getBytes en lugar de SPIFFS para evitar headers pesados del SDK.
+// Límite práctico: ~14 KB (restado overhead de partición NVS 20 KB).
 String storage_get_credentials(void)
 {
-    return prefs.getString("creds_json", "");
+    size_t len = prefs.getBytesLength("creds");
+    if (len == 0) return "";
+
+    char* buf = (char*)malloc(len + 1);
+    if (!buf) return "";
+
+    prefs.getBytes("creds", buf, len);
+    buf[len] = '\0';
+    String result(buf);
+    free(buf);
+    return result;
 }
 
 void storage_set_credentials(const char* json)
 {
-    prefs.putString("creds_json", json);
-    Serial.printf("[Storage] Credenciales guardadas en NVS (%d bytes)\n", strlen(json));
+    size_t len = strlen(json);
+    size_t written = prefs.putBytes("creds", json, len);
+    Serial.printf("[Storage] Credenciales guardadas en NVS blob (%d bytes)\n", written);
 }
 
 // ── Contraseña portal de configuración ──────────
