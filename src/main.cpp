@@ -364,6 +364,12 @@ void on_rpc_reset_lockout(void)
 // TIMER NFC
 // ============================================
 
+static void on_nfc_error_return(void) {
+    display_turn_on();
+    lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    screen_busy = false;
+}
+
 void nfc_check_timer_cb(lv_timer_t* timer)
 {
     if (!nfc_enabled)           return;
@@ -392,8 +398,11 @@ void nfc_check_timer_cb(lv_timer_t* timer)
                 } else {
                     Serial.println("[NFC] PIN en tarjeta no válido o expirado");
                     thingsboard_publish_access_event(false, "nfc_json");
-                    if (lv_scr_act() == screen_pinpad) {
-                        pinpad_show_status("Credencial no válida", COLOR_ERROR);
+                    
+                    if (!screen_busy) {
+                        screen_busy = true;
+                        display_turn_on();
+                        error_screen_show(on_nfc_error_return, 2000);
                     }
                 }
                 return;  // No continuar con chequeo de UID
@@ -408,8 +417,11 @@ void nfc_check_timer_cb(lv_timer_t* timer)
     } else {
         Serial.println("[Main] NFC rechazado — UID no autorizado");
         thingsboard_publish_access_event(false, "nfc");
-        if (lv_scr_act() == screen_pinpad) {
-            pinpad_show_status("Tarjeta no autorizada", COLOR_ERROR);
+        
+        if (!screen_busy) {
+            screen_busy = true;
+            display_turn_on();
+            error_screen_show(on_nfc_error_return, 2000);
         }
     }
 }
