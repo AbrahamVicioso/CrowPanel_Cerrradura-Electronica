@@ -36,7 +36,8 @@ CrowPanel_Cerrradura-Electronica/
 │   ├── config/                    # Configuración del sistema
 │   │   ├── config.h              # Constantes globales
 │   │   ├── pins.h                # Definición de pines GPIO
-│   │   ├── storage.h/.cpp        # NVS (Non-Volatile Storage)
+│   │   ├── storage.h/.cpp        # NVS persistence (Preferences)
+│   │   ├── credentials.h/.cpp    # Módulo de credenciales multi-PIN (desde TB)
 │   │   ├── network_config.h/.cpp # WiFi & ThingsBoard
 │   │   └── portal.h/.cpp         # Web portal de configuración
 │   │
@@ -361,23 +362,11 @@ static const char* ATTR_LOCKOUT_DURATION = "lockoutDuration";
 - **REGLA**: iteración sobre JsonArrayConst → usar `for (JsonVariantConst v : arr)` + `v.as<JsonObjectConst>()` explícito (la conversión implícita `for (JsonObjectConst obj : arr)` puede silenciosamente retornar null en ArduinoJson 6.21.5)
 
 ### RPC Server-side (Control Remoto)
-```cpp
-// Métodos RPC disponibles
-static const char* RPC_LOCK = "lock";
-static const char* RPC_UNLOCK = "unlock";
-static const char* RPC_UNLOCK_TEMP = "unlockTemporary";
-static const char* RPC_RESET_LOCKOUT = "resetLockout";
-
-// Handler único para RPC
-static RPC_Response processServerSideRPC(const RPC_Data& data) {
-    if (strcmp(data.method_name, RPC_UNLOCK_TEMP) == 0) {
-        uint32_t durationMs = data.params.as<JsonObject>()["durationMs"];
-        rpcUnlockTempCb(durationMs);
-        return RPC_Response("success", true);
-    }
-    // ... otros RPC
-}
-```
+Implementados 2 métodos RPC (lock/unlock se manejan via shared attribute `lockState`):
+| Método          | Params                  | Descripción               |
+|-----------------|-------------------------|---------------------------|
+| unlockTemporary | `{"duration": 5000}`    | Desbloquear N ms (1s-5min)|
+| resetLockout    | —                       | (stub, lockout eliminado) |
 
 ### Telemetría
 ```cpp
@@ -456,12 +445,13 @@ static void pin_button_event_cb(lv_event_t* e) {
 static PinValidatorCallback pin_validator = nullptr;
 void pinpad_set_pin_validator(PinValidatorCallback validator);
 
-// credentials.cpp valida contra array de TB
+// credentials.cpp valida contra credenciales cargadas desde TB
 bool credentials_validate_pin(const String& pin);
-// - Compara con cada credencial cargada
-// - Para "huesped": verifica ventana activacion/expiracion (UTC)
-// - Para "personal": verifica solo expiracion (null = nunca expira)
-// - Si NTP no sincronizado: permite acceso si PIN coincide (warning en serial)
+// - Tanto huéspedes como personal tienen activacion + expiracion (ambas UTC)
+// - Si activacion != 0 y now < activacion → DENEGADO (no activo aún)
+// - Si expiracion != 0 y now > expiracion → DENEGADO (expirado)
+// - Si NTP no sincronizado (now < 1700000000): permite si PIN coincide (warning en serial)
+// - Al boot: carga credenciales previas desde NVS blob para funcionar sin internet
 ```
 
 ### Sistema de Lockout
@@ -515,17 +505,12 @@ Namespace: `"lock_cfg"` (Preferences library)
 ### Funciones de Storage
 ```cpp
 void storage_init() {
-    prefs.begin("lock_cfg", false);
-    SPIFFS.begin(true);  // monta partición spiffs
+    prefs.begin("lock_cfg", false);  // SIN SPIFFS — no incluir SPIFFS.h
 }
 
-String storage_get_pin() {
-    return prefs.getString("pin", DEFAULT_PIN);
-}  // PIN legacy — las credenciales reales vienen de SPIFFS/TB
-
-void storage_set_pin(const char* pin) {
-    prefs.putString("pin", pin);
-}
+// Credenciales: NVS blob (putBytes/getBytes), NO SPIFFS
+String storage_get_credentials();           // lee blob "creds" → String JSON
+void   storage_set_credentials(const char*); // escribe blob "creds"
 ```
 
 ## 🔌 Portal de Configuración Web
@@ -698,9 +683,11 @@ if (WiFi.status() != WL_CONNECTED) {
 
 ### ⚠️ Reglas de Performance ESP32
 - **NUNCA** imprimir strings largos (JSON completo) en el loop o en callbacks frecuentes — usar `Serial.printf` solo con longitud, no contenido
-- **NUNCA** aumentar `ThingsBoardSized<N>` más allá de `<64>` — causa presión de memoria
-- **Buffer MQTT recepción**: 1024 bytes es suficiente para el JSON de credenciales (~450 bytes); no aumentar sin necesidad
-- **`DynamicJsonDocument`**: usar tamaño mínimo necesario; en credentials.cpp usar 2048 (suficiente para 20 credenciales)
+- **NUNCA** aumentar `ThingsBoardSized<N>` más allá de `<64>` — causa presión de memoria (el N controla un StaticJsonDocument en stack)
+- **Buffer MQTT**: constructor es `(client, receive, send)` — receive PRIMERO. receive=8192 para credenciales grandes; send=256 suficiente para telemetría
+- **`DynamicJsonDocument`**: en credentials.cpp usar 16384 (soporta ~100 credenciales con ArduinoJson zero-copy)
+- **NUNCA** usar `#include <esp_heap_caps.h>`, `#include <SPIFFS.h>` ni `#include <WebServer.h>` en archivos src/ — son headers pesados IDF que LDF propaga a todos los archivos causando "CreateProcess: No such file or directory" en Windows MSYS2
+- **ArduinoJson iteración**: usar `for (JsonVariantConst v : arr) { auto obj = v.as<JsonObjectConst>(); }` — la conversión implícita `for (JsonObjectConst obj : arr)` retorna null silenciosamente
 
 ---
 
