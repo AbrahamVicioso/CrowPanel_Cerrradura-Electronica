@@ -357,8 +357,9 @@ static const char* ATTR_LOCKOUT_DURATION = "lockoutDuration";
 - El parse en `credentials.cpp` usa `DynamicJsonDocument(16384)` en DRAM + algoritmo Hinnant para UTC sin mktime
 - **NO usar `#include <esp_heap_caps.h>`** — es header pesado IDF que causa CreateProcess en Windows MSYS2
 - TB puede enviar el valor como string escapado o como JSON nativo — ambos soportados
-- Constructor ThingsBoard: `ThingsBoardSized<64> tb(mqttClient, receive=8192, send=256, ...)` — receive PRIMERO, send SEGUNDO (orden fácil de confundir)
+- Constructor ThingsBoard: `ThingsBoardSized<64> tb(mqttClient, receive=8192, send=1024, ...)` — receive PRIMERO, send SEGUNDO (orden fácil de confundir)
 - Receive buffer 8192: soporta JSON de credenciales grandes sin truncamiento
+- Send buffer 1024: `Send_Json_String` valida `send_buffer_size < json_size` y retorna false silenciosamente si el payload es muy grande — el accessEvent con credencial puede llegar a ~512 bytes, requiere al menos 1024
 - **REGLA**: iteración sobre JsonArrayConst → usar `for (JsonVariantConst v : arr)` + `v.as<JsonObjectConst>()` explícito (la conversión implícita `for (JsonObjectConst obj : arr)` puede silenciosamente retornar null en ArduinoJson 6.21.5)
 
 ### RPC Server-side (Control Remoto)
@@ -684,7 +685,7 @@ if (WiFi.status() != WL_CONNECTED) {
 ### ⚠️ Reglas de Performance ESP32
 - **NUNCA** imprimir strings largos (JSON completo) en el loop o en callbacks frecuentes — usar `Serial.printf` solo con longitud, no contenido
 - **NUNCA** aumentar `ThingsBoardSized<N>` más allá de `<64>` — causa presión de memoria (el N controla un StaticJsonDocument en stack)
-- **Buffer MQTT**: constructor es `(client, receive, send)` — receive PRIMERO. receive=8192 para credenciales grandes; send=256 suficiente para telemetría
+- **Buffer MQTT**: constructor es `(client, receive, send)` — receive PRIMERO. receive=8192 para credenciales grandes; send=1024 para accessEvent con credencial (hasta ~512 bytes serializado)
 - **`DynamicJsonDocument`**: en credentials.cpp usar 16384 (soporta ~100 credenciales con ArduinoJson zero-copy)
 - **NUNCA** usar `#include <esp_heap_caps.h>`, `#include <SPIFFS.h>` ni `#include <WebServer.h>` en archivos src/ — son headers pesados IDF que LDF propaga a todos los archivos causando "CreateProcess: No such file or directory" en Windows MSYS2
 - **ArduinoJson iteración**: usar `for (JsonVariantConst v : arr) { auto obj = v.as<JsonObjectConst>(); }` — la conversión implícita `for (JsonObjectConst obj : arr)` retorna null silenciosamente

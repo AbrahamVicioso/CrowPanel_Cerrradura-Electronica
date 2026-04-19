@@ -39,8 +39,8 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
 
 // Constructor: (client, receive_buffer, send_buffer, max_stack, apis)
 // receive=8192 para soportar JSON de credenciales grandes (~700-2000 bytes)
-// send=384 soporta accessEvent JSON serializado (~200 chars + overhead MQTT)
-static ThingsBoardSized<64> tb(mqttClient, 8192, 384, Default_Max_Stack_Size, apis);
+// send=1024 para soportar accessEvent + campos de credenciales sin truncamiento
+static ThingsBoardSized<64> tb(mqttClient, 8192, 1024, Default_Max_Stack_Size, apis);
 
 // ============================================
 // ESTADO INTERNO
@@ -292,99 +292,112 @@ void thingsboard_reconnect(void)
 
 bool thingsboard_publish_lock_state(LockState state)
 {
-    if (!tb.connected()) return false;
-    if (isProcessingRemoteChange) return true;  // evitar loop
+    if (!tb.connected()) {
+        Serial.println("[TB] WARN: no conectado — lock state no publicado");
+        return false;
+    }
 
     bool locked = (state == LockState::LOCKED);
     const char* stateStr = locked ? "locked" : "unlocked";
 
-    // Telemetría (serie temporal)
-    bool ok = tb.sendTelemetryData("locked", locked);
-    // Atributo cliente (estado actual)
-    ok |= tb.sendAttributeData(ATTR_LOCK_STATE, stateStr);
+    // Telemetría (serie temporal) — siempre se envía, incluso en cambios remotos
+    bool ok1 = tb.sendTelemetryData("locked", locked);
+    if (!ok1) Serial.println("[TB] ERROR: sendTelemetryData(locked) falló");
 
-    Serial.printf("[TB] Estado publicado: %s\n", stateStr);
-    return ok;
+    // Atributo cliente — omitir durante cambio remoto para evitar feedback loop
+    bool ok2 = true;
+    if (!isProcessingRemoteChange) {
+        ok2 = tb.sendAttributeData(ATTR_LOCK_STATE, stateStr);
+        if (!ok2) Serial.println("[TB] ERROR: sendAttributeData(lockState) falló");
+    }
+
+    if (ok1) Serial.printf("[TB] Telemetría publicada: locked=%s\n", stateStr);
+    return ok1 && ok2;
 }
 
 bool thingsboard_publish_access_event(bool granted, const char* method)
 {
-    if (!tb.connected()) return false;
+    if (!tb.connected()) {
+        Serial.println("[TB] WARN: no conectado — access event no publicado");
+        return false;
+    }
 
-    bool ok = true;
-    ok &= tb.sendTelemetryData("accessGranted", granted);
-    ok &= tb.sendTelemetryData("accessMethod",  method);
+    // Batch: ambos campos en un solo mensaje MQTT usando JSON raw (sin double-escaping)
+    char json[128];
+    snprintf(json, sizeof(json),
+             "{\"accessGranted\":%s,\"accessMethod\":\"%s\"}",
+             granted ? "true" : "false", method);
 
-    Serial.printf("[TB] Evento: %s via %s\n",
-                  granted ? "ACCESO OK" : "DENEGADO", method);
+    bool ok = tb.sendTelemetryString(json);
+
+    if (!ok) {
+        Serial.printf("[TB] ERROR: sendTelemetryString(accessEvent) falló — %s via %s\n",
+                      granted ? "ACCESO OK" : "DENEGADO", method);
+    } else {
+        Serial.printf("[TB] Evento publicado: %s via %s\n",
+                      granted ? "ACCESO OK" : "DENEGADO", method);
+    }
     return ok;
 }
 
 bool thingsboard_publish_access_event_with_credential(bool granted, const char* method,
                                                        const CredentialMatch* match)
 {
-    if (!tb.connected()) return false;
-
-    bool ok = true;
-    ok &= tb.sendTelemetryData("accessGranted", granted);
-    ok &= tb.sendTelemetryData("accessMethod",  method);
+    if (!tb.connected()) {
+        Serial.println("[TB] WARN: no conectado — access event no publicado");
+        return false;
+    }
 
     if (!match) {
-        Serial.printf("[TB] Evento: %s via %s\n",
-                      granted ? "ACCESO OK" : "DENEGADO", method);
-        return ok;
+        // Sin credencial: usar la versión simple
+        return thingsboard_publish_access_event(granted, method);
     }
 
-    // Construir JSON del cuerpo de la credencial como string serializado
-    char buf[384];
-    int  len = 0;
+    // JSON raw manual — evita ArduinoJson double-escaping y overflow de buffer de serialización
+    char json[512];
+    bool ok = false;
+
     if (match->tipo == 'P') {
-        len = snprintf(buf, sizeof(buf),
-            "{\"type\":\"personal\","
-            "\"personalId\":%d,"
-            "\"nombre\":\"%s\","
-            "\"credencial\":{"
-            "\"pin\":\"%s\","
-            "\"activacion\":\"%s\","
-            "\"expiracion\":\"%s\""
-            "}}",
-            match->owner_id,
-            match->nombre,
-            match->pin,
-            match->activacion_str,
-            match->expiracion_str);
+        snprintf(json, sizeof(json),
+            "{\"accessGranted\":%s,\"accessMethod\":\"%s\","
+            "\"credType\":\"personal\",\"credOwnerId\":%d,"
+            "\"credNombre\":\"%s\",\"credPin\":\"%s\","
+            "\"credActivacion\":\"%s\",\"credExpiracion\":\"%s\"}",
+            granted ? "true" : "false", method,
+            match->owner_id, match->nombre, match->pin,
+            match->activacion_str, match->expiracion_str);
     } else {
-        len = snprintf(buf, sizeof(buf),
-            "{\"type\":\"huesped\","
-            "\"huespedId\":%d,"
-            "\"reservaId\":%d,"
-            "\"credencial\":{"
-            "\"pin\":\"%s\","
-            "\"activacion\":\"%s\","
-            "\"expiracion\":\"%s\""
-            "}}",
-            match->owner_id,
-            match->reserva_id,
-            match->pin,
-            match->activacion_str,
-            match->expiracion_str);
+        snprintf(json, sizeof(json),
+            "{\"accessGranted\":%s,\"accessMethod\":\"%s\","
+            "\"credType\":\"huesped\",\"credOwnerId\":%d,"
+            "\"credReservaId\":%d,\"credPin\":\"%s\","
+            "\"credActivacion\":\"%s\",\"credExpiracion\":\"%s\"}",
+            granted ? "true" : "false", method,
+            match->owner_id, match->reserva_id, match->pin,
+            match->activacion_str, match->expiracion_str);
     }
+    ok = tb.sendTelemetryString(json);
 
-    if (len > 0 && len < (int)sizeof(buf)) {
-        ok &= tb.sendTelemetryData("accessEvent", buf);
+    if (!ok) {
+        Serial.printf("[TB] ERROR: sendTelemetry(accessEvent+cred) falló — %s via %s (%s id=%d)\n",
+                      granted ? "ACCESO OK" : "DENEGADO", method,
+                      match->tipo == 'P' ? "personal" : "huesped",
+                      match->owner_id);
+    } else {
+        Serial.printf("[TB] Evento+cred publicado: %s via %s (%s id=%d)\n",
+                      granted ? "ACCESO OK" : "DENEGADO", method,
+                      match->tipo == 'P' ? "personal" : "huesped",
+                      match->owner_id);
     }
-
-    Serial.printf("[TB] Evento: %s via %s (%s id=%d)\n",
-                  granted ? "ACCESO OK" : "DENEGADO", method,
-                  match->tipo == 'P' ? "personal" : "huesped",
-                  match->owner_id);
     return ok;
 }
 
 bool thingsboard_publish_failed_attempts(int count)
 {
     if (!tb.connected()) return false;
-    return tb.sendTelemetryData("failedAttempts", count);
+    bool ok = tb.sendTelemetryData("failedAttempts", count);
+    if (!ok) Serial.printf("[TB] ERROR: sendTelemetryData(failedAttempts=%d) falló\n", count);
+    return ok;
 }
 
 bool thingsboard_publish_client_attributes(void)
