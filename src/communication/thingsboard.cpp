@@ -40,7 +40,11 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
 // Constructor: (client, receive_buffer, send_buffer, max_stack, apis)
 // receive=8192 para soportar JSON de credenciales grandes (~700-2000 bytes)
 // send=1024 para soportar accessEvent + campos de credenciales sin truncamiento
+#if THINGSBOARD_ENABLE_DYNAMIC
+static ThingsBoardSized<64> tb(mqttClient, 8192, 1024, Default_Max_Stack_Size, 0, apis);
+#else
 static ThingsBoardSized<64> tb(mqttClient, 8192, 1024, Default_Max_Stack_Size, apis);
+#endif
 
 // ============================================
 // ESTADO INTERNO
@@ -186,7 +190,7 @@ static void on_rpc_reset_lockout(JsonVariantConst const& data, JsonDocument& res
 
 void thingsboard_init(void)
 {
-    Serial.println("[TB] Módulo ThingsBoard v2 inicializado");
+    Serial.printf("[TB] Módulo ThingsBoard inicializado (DRAM libre: %d KB)\n", ESP.getFreeHeap() / 1024);
 }
 
 bool thingsboard_connect(void)
@@ -200,10 +204,11 @@ bool thingsboard_connect(void)
     String tbServer = storage_get_tb_server();
     String tbToken  = storage_get_tb_token();
 
-    Serial.printf("[TB] Conectando a %s:%d ...\n", tbServer.c_str(), THINGSBOARD_PORT);
+    Serial.printf("[TB] Intentando conectar a %s:%d con token %s...\n", 
+                  tbServer.c_str(), THINGSBOARD_PORT, tbToken.c_str());
 
     if (!tb.connect(tbServer.c_str(), tbToken.c_str(), THINGSBOARD_PORT)) {
-        Serial.println("[TB] Error de conexión");
+        Serial.printf("[TB] ERROR de conexión (Servidor: %s)\n", tbServer.c_str());
         tbConnected = false;
         return false;
     }

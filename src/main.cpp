@@ -68,6 +68,10 @@ static uint32_t current_auto_lock_delay = LOCK_AUTO_LOCK_DELAY_MS;
 static bool     nfc_enabled             = true;
 static int      failed_attempts_count   = 0;
 
+// Prototipos locales
+void sync_time_ntp(void);
+void login_user(void); // si fuera necesario
+
 // Pantallas
 static lv_obj_t* screen_welcome  = nullptr;
 static lv_obj_t* screen_standby  = nullptr;
@@ -502,7 +506,8 @@ void connect_wifi(void)
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
 
-    for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) {
+    // Máximo 5 segundos — no bloquear el boot si el AP no responde rápido
+    for (int i = 0; i < 10 && WiFi.status() != WL_CONNECTED; i++) {
         delay(500);
         Serial.print(".");
     }
@@ -511,7 +516,7 @@ void connect_wifi(void)
     if (WiFi.status() == WL_CONNECTED) {
         Serial.printf("WiFi conectado! IP: %s\n", WiFi.localIP().toString().c_str());
     } else {
-        Serial.printf("WiFi fallido (estado %d) — operando sin conexión\n", WiFi.status());
+        Serial.printf("WiFi no disponible (estado %d) — continuando sin conexion\n", WiFi.status());
     }
 }
 
@@ -540,7 +545,7 @@ void setup()
     }
 
     // 2. Hardware
-    Serial.println("[2/7] Hardware (cerradura)...");
+    Serial.printf("[2/7] Hardware (cerradura)... (DRAM libre: %d KB)\n", ESP.getFreeHeap() / 1024);
     lock_init();
 
     // 3. Display
@@ -548,46 +553,31 @@ void setup()
     display_init();
 
     // 4. WiFi + NTP
-    Serial.println("[4/7] WiFi...");
+    Serial.println("[4/7] WiFi (asíncrono)...");
     connect_wifi();
 
+    // 5. ThingsBoard (Inicializar aunque no haya WiFi aún)
+    Serial.println("[5/7] ThingsBoard (Init)...");
+    thingsboard_init();
+    
+    // Registrar todos los callbacks ANTES de conectar
+    thingsboard_set_state_change_callback(on_remote_state_change);
+    thingsboard_set_credentials_update_callback(on_credentials_update);
+    thingsboard_set_auto_lock_delay_callback(on_auto_lock_delay_update);
+    thingsboard_set_nfc_enabled_callback(on_nfc_enabled_update);
+    thingsboard_set_nfc_uid_callback(on_nfc_uid_update);
+    thingsboard_set_max_failed_callback(on_max_failed_update);
+    thingsboard_set_lockout_duration_callback(on_lockout_duration_update);
+    thingsboard_set_rpc_unlock_temp_callback(on_rpc_unlock_temporary);
+    thingsboard_set_rpc_reset_lockout_callback(on_rpc_reset_lockout);
+
     if (WiFi.status() == WL_CONNECTED) {
-        // Timezone: República Dominicana (AST, UTC-4, sin DST)
-        setenv("TZ", "AST4", 1);
-        tzset();
-        configTime(-4 * 3600, 0, "pool.ntp.org", "time.google.com");
-
-        struct tm t;
-        Serial.print("Sincronizando NTP");
-        for (int i = 0; i < 10 && !getLocalTime(&t); i++) {
-            delay(500); Serial.print(".");
-        }
-        Serial.println();
-        if (getLocalTime(&t)) {
-            Serial.printf("Hora: %02d:%02d:%02d\n", t.tm_hour, t.tm_min, t.tm_sec);
-        }
-    }
-
-    // 5. ThingsBoard
-    Serial.println("[5/7] ThingsBoard...");
-    if (WiFi.status() == WL_CONNECTED) {
-        thingsboard_init();
-
-        // Registrar todos los callbacks ANTES de conectar
-        thingsboard_set_state_change_callback(on_remote_state_change);
-        thingsboard_set_credentials_update_callback(on_credentials_update);
-        thingsboard_set_auto_lock_delay_callback(on_auto_lock_delay_update);
-        thingsboard_set_nfc_enabled_callback(on_nfc_enabled_update);
-        thingsboard_set_nfc_uid_callback(on_nfc_uid_update);
-        thingsboard_set_max_failed_callback(on_max_failed_update);
-        thingsboard_set_lockout_duration_callback(on_lockout_duration_update);
-        thingsboard_set_rpc_unlock_temp_callback(on_rpc_unlock_temporary);
-        thingsboard_set_rpc_reset_lockout_callback(on_rpc_reset_lockout);
-
+        sync_time_ntp();
         thingsboard_connect();
     }
 
     // 6. LVGL
+    Serial.printf("[Mem] Heap: %u  PSRAM: %u\n", ESP.getFreeHeap(), ESP.getFreePsram());
     Serial.println("[6/7] LVGL + UI...");
     lv_init();
 
@@ -691,6 +681,17 @@ void setup()
 // LOOP
 // ============================================
 
+void sync_time_ntp(void)
+{
+    // Timezone: República Dominicana (AST, UTC-4, sin DST)
+    setenv("TZ", "AST4", 1);
+    tzset();
+    
+    // Configuración NTP no bloqueante
+    configTime(-4 * 3600, 0, "pool.ntp.org", "time.google.com");
+    Serial.println("[NTP] Configurado (sincronización en segundo plano)");
+}
+
 void loop()
 {
     // ── LVGL (máxima prioridad) ─────────────────────────────
@@ -703,11 +704,31 @@ void loop()
         return;  // no ejecutar lógica normal mientras el portal está activo
     }
 
-    // ── ThingsBoard ──────────────────────────────────────────
+    // ── ThingsBoard & WiFi ───────────────────────────────────
     static uint32_t last_tb = 0;
-    if (WiFi.status() == WL_CONNECTED && millis() - last_tb > 50) {
-        thingsboard_loop();
+    if (millis() - last_tb > 100) {
+        if (WiFi.status() == WL_CONNECTED) {
+            thingsboard_loop();
+        } else {
+            // Intentar reconexión WiFi persistente si pasan más de 30s offline
+            static uint32_t last_wifi_retry = 0;
+            if (millis() - last_wifi_retry > 30000) {
+                Serial.println("[WiFi] Reintentando conexión...");
+                WiFi.begin(); 
+                last_wifi_retry = millis();
+            }
+        }
         last_tb = millis();
+    }
+    
+    // Si acaba de conectar y no está sincronizado, sincronizar
+    static bool was_connected = false;
+    if (WiFi.status() == WL_CONNECTED && !was_connected) {
+        sync_time_ntp();
+        thingsboard_connect();
+        was_connected = true;
+    } else if (WiFi.status() != WL_CONNECTED) {
+        was_connected = false;
     }
 
     // ── Actualizar indicadores de estado en standby ──────────

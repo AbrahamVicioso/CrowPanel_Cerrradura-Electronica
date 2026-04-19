@@ -10,8 +10,8 @@
 // PINES DEL SISTEMA
 // ============================================
 
-// Pin del relay/cerradura
-#define LOCK_PIN 43
+// Pin del relay/cerradura (GPIO 38 según README_HARDWARE.md)
+#define LOCK_PIN 38
 
 // Backlight LCD
 #define TFT_BL 2

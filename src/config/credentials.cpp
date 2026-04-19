@@ -129,10 +129,25 @@ static int load_credentials_array(JsonArrayConst arr, char tipo,
 // API PÚBLICA
 // ============================================
 
+// Allocator que usa PSRAM cuando está disponible, con fallback a DRAM.
+// Evita consumir 16KB de DRAM limitada en el parse de credenciales.
+struct PsramAllocator {
+    void* allocate(size_t size) {
+        if (psramFound()) return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+        return malloc(size);
+    }
+    void deallocate(void* ptr) { free(ptr); }
+    void* reallocate(void* ptr, size_t new_size) {
+        if (psramFound()) return heap_caps_realloc(ptr, new_size, MALLOC_CAP_SPIRAM);
+        return realloc(ptr, new_size);
+    }
+};
+
 bool credentials_update(const char* json)
 {
-    // 16KB en heap DRAM — suficiente para decenas de huéspedes/personal
-    DynamicJsonDocument doc(16384);
+    Serial.printf("[Creds] Actualizando credenciales (DRAM libre: %d KB)\n", ESP.getFreeHeap() / 1024);
+    // 16KB en PSRAM (fallback DRAM) — suficiente para decenas de huéspedes/personal
+    BasicJsonDocument<PsramAllocator> doc(16384);
     DeserializationError err = deserializeJson(doc, json);
     if (err) {
         Serial.printf("[Creds] Error parse JSON: %s\n", err.c_str());
