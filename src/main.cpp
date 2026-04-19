@@ -706,20 +706,16 @@ void loop()
     }
 
     // ── ThingsBoard & WiFi ───────────────────────────────────
-    static uint32_t last_tb = 0;
-    if (millis() - last_tb > 100) {
-        if (WiFi.status() == WL_CONNECTED) {
-            thingsboard_loop();
-        } else {
-            // Intentar reconexión WiFi persistente si pasan más de 30s offline
-            static uint32_t last_wifi_retry = 0;
-            if (millis() - last_wifi_retry > 30000) {
-                Serial.println("[WiFi] Reintentando conexión...");
-                WiFi.begin(); 
-                last_wifi_retry = millis();
-            }
+    if (WiFi.status() == WL_CONNECTED) {
+        thingsboard_loop();
+    } else {
+        // Intentar reconexión WiFi persistente si pasan más de 30s offline
+        static uint32_t last_wifi_retry = 0;
+        if (millis() - last_wifi_retry > 30000) {
+            Serial.println("[WiFi] Reintentando conexión...");
+            WiFi.begin(); 
+            last_wifi_retry = millis();
         }
-        last_tb = millis();
     }
     
     // Si acaba de conectar y no está sincronizado, sincronizar

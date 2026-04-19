@@ -37,14 +37,14 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
     &serverSideRPC
 };
 
-// Constructor: (client, receive_buffer, send_buffer, max_stack, apis)
-// receive=8192 para soportar JSON de credenciales grandes (~700-2000 bytes)
-// send=1024 para soportar accessEvent + campos de credenciales sin truncamiento
-// max_response_size (0) se fija explícitamente para evitar confusión con el array de APIs
+// Constructor: (client, buffer_size, max_stack_size, max_response_size, apis)
+// buffer_size=16384 para soportar JSON de credenciales grandes (~14KB total en NVS)
+// max_stack_size=2048 para serialización ArduinoJson interna
+// max_response_size=2048 para procesar respuestas de atributos/RPC sin truncamiento
 #if THINGSBOARD_ENABLE_DYNAMIC
-static ThingsBoardSized<64> tb(mqttClient, 8192, 1024, Default_Max_Stack_Size, 0, apis);
+static ThingsBoardSized<64> tb(mqttClient, 16384, 2048, 2048, 0, apis);
 #else
-static ThingsBoardSized<64> tb(mqttClient, 8192, 1024, Default_Max_Stack_Size, apis);
+static ThingsBoardSized<64> tb(mqttClient, 16384, 2048, 2048, apis);
 #endif
 
 // ============================================
@@ -320,6 +320,7 @@ bool thingsboard_publish_lock_state(LockState state)
 
     // Telemetría (serie temporal) — siempre se envía, incluso en cambios remotos
     bool ok1 = tb.sendTelemetryData("locked", locked);
+    if (ok1) tb.loop(); // Forzar procesamiento inmediato
     if (!ok1) Serial.println("[TB] ERROR: sendTelemetryData(locked) falló");
 
     // Atributo cliente — omitir durante cambio remoto para evitar feedback loop
@@ -347,6 +348,7 @@ bool thingsboard_publish_access_event(bool granted, const char* method)
              granted ? "true" : "false", method);
 
     bool ok = tb.sendTelemetryString(json);
+    if (ok) tb.loop(); // Forzar procesamiento inmediato
 
     if (!ok) {
         Serial.printf("[TB] ERROR: sendTelemetryString(accessEvent) falló — %s via %s\n",
@@ -395,6 +397,7 @@ bool thingsboard_publish_access_event_with_credential(bool granted, const char* 
             match->activacion_str, match->expiracion_str);
     }
     ok = tb.sendTelemetryString(json);
+    if (ok) tb.loop(); // Forzar procesamiento inmediato
 
     if (!ok) {
         Serial.printf("[TB] ERROR: sendTelemetry(accessEvent+cred) falló — %s via %s (%s id=%d)\n",
@@ -414,6 +417,7 @@ bool thingsboard_publish_failed_attempts(int count)
 {
     if (!tb.connected()) return false;
     bool ok = tb.sendTelemetryData("failedAttempts", count);
+    if (ok) tb.loop();
     if (!ok) Serial.printf("[TB] ERROR: sendTelemetryData(failedAttempts=%d) falló\n", count);
     return ok;
 }
@@ -427,6 +431,7 @@ bool thingsboard_publish_client_attributes(void)
     ok &= tb.sendAttributeData("ipAddress",       WiFi.localIP().toString().c_str());
     ok &= tb.sendAttributeData("macAddress",      WiFi.macAddress().c_str());
     ok &= tb.sendTelemetryData("uptime",          (long)millis());
+    if (ok) tb.loop();
 
     Serial.printf("[TB] Atributos cliente publicados (IP: %s)\n",
                   WiFi.localIP().toString().c_str());
