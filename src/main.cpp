@@ -533,6 +533,7 @@ void setup()
 
     // 1. Storage NVS
     Serial.println("[1/7] Storage NVS...");
+    Wire.begin(I2C_SDA, I2C_SCL); // Centralizado: NFC y Touch usan este bus
     storage_init();
 
     // Cargar credenciales guardadas (contingencia sin internet)
@@ -581,7 +582,7 @@ void setup()
     Serial.println("[6/7] LVGL + UI...");
     lv_init();
 
-    Wire.begin(TOUCH_SDA, TOUCH_SCL);
+    // Inicializar el hardware táctil (I2C ya está en 19/20)
     ts.begin();
     ts.setRotation(TOUCH_ROTATION);
 

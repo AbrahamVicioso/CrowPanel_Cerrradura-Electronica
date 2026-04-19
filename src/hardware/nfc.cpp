@@ -19,7 +19,6 @@ static char authorized_uid[25] = "";  // "AA:BB:CC:DD:EE:FF:GG\0"
 
 bool nfc_init(void)
 {
-    Wire.begin(NFC_SDA, NFC_SCL);
     nfc.begin();
 
     uint32_t versiondata = nfc.getFirmwareVersion();

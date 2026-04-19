@@ -20,7 +20,6 @@ TAMC_GT911 ts = TAMC_GT911(
 
 void touch_init(void)
 {
-    Wire.begin(TOUCH_SDA, TOUCH_SCL);
     ts.begin();
     ts.setRotation(TOUCH_ROTATION);
     

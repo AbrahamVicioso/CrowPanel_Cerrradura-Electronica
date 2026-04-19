@@ -40,6 +40,7 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
 // Constructor: (client, receive_buffer, send_buffer, max_stack, apis)
 // receive=8192 para soportar JSON de credenciales grandes (~700-2000 bytes)
 // send=1024 para soportar accessEvent + campos de credenciales sin truncamiento
+// max_response_size (0) se fija explícitamente para evitar confusión con el array de APIs
 #if THINGSBOARD_ENABLE_DYNAMIC
 static ThingsBoardSized<64> tb(mqttClient, 8192, 1024, Default_Max_Stack_Size, 0, apis);
 #else
@@ -191,6 +192,37 @@ static void on_rpc_reset_lockout(JsonVariantConst const& data, JsonDocument& res
 void thingsboard_init(void)
 {
     Serial.printf("[TB] Módulo ThingsBoard inicializado (DRAM libre: %d KB)\n", ESP.getFreeHeap() / 1024);
+
+    // ── Suscripción ÚNICA a Shared Attributes ──────────────────
+    // Se hace en init() porque la librería gestiona la resuscripción automática al reconectar.
+    // Esto evita el error "Too many (MaxSubscriptions) subscriptions".
+    const std::array<const char*, 7U> attrs = {{
+        ATTR_LOCK_STATE,
+        ATTR_CREDENTIALS,
+        ATTR_AUTO_LOCK_DELAY,
+        ATTR_NFC_ENABLED,
+        ATTR_NFC_UID,
+        ATTR_MAX_FAILED,
+        ATTR_LOCKOUT_DURATION
+    }};
+    Shared_Attribute_Callback<7U> attrCb(processSharedAttributes,
+                                          attrs.cbegin(), attrs.cend());
+    if (!sharedAttrUpdate.Shared_Attributes_Subscribe(attrCb)) {
+        Serial.println("[TB] ERROR: No se pudo registrar suscripción a shared attributes");
+    } else {
+        Serial.println("[TB] Callbacks de Shared Attributes registrados");
+    }
+
+    // ── Suscripción ÚNICA a RPC ──────────────────────────────
+    const std::array<RPC_Callback, 2U> rpcCbs = {{
+        RPC_Callback{ "unlockTemporary", on_rpc_unlock_temporary },
+        RPC_Callback{ "resetLockout",    on_rpc_reset_lockout    }
+    }};
+    if (!serverSideRPC.RPC_Subscribe(rpcCbs.cbegin(), rpcCbs.cend())) {
+        Serial.println("[TB] ERROR: No se pudo registrar suscripción a RPC");
+    } else {
+        Serial.println("[TB] Callbacks de RPC registrados");
+    }
 }
 
 bool thingsboard_connect(void)
@@ -216,34 +248,8 @@ bool thingsboard_connect(void)
     Serial.println("[TB] Conectado!");
     tbConnected = true;
 
-    // ── Suscribir a los 7 shared attributes ───────────────
-    const std::array<const char*, 7U> attrs = {{
-        ATTR_LOCK_STATE,
-        ATTR_CREDENTIALS,
-        ATTR_AUTO_LOCK_DELAY,
-        ATTR_NFC_ENABLED,
-        ATTR_NFC_UID,
-        ATTR_MAX_FAILED,
-        ATTR_LOCKOUT_DURATION
-    }};
-    Shared_Attribute_Callback<7U> attrCb(processSharedAttributes,
-                                          attrs.cbegin(), attrs.cend());
-    if (!sharedAttrUpdate.Shared_Attributes_Subscribe(attrCb)) {
-        Serial.println("[TB] ERROR: No se pudo suscribir a shared attributes");
-    } else {
-        Serial.println("[TB] Suscrito a 7 shared attributes");
-    }
-
-    // ── Suscribir a RPC ───────────────────────────────────
-    const std::array<RPC_Callback, 2U> rpcCbs = {{
-        RPC_Callback{ "unlockTemporary", on_rpc_unlock_temporary },
-        RPC_Callback{ "resetLockout",    on_rpc_reset_lockout    }
-    }};
-    if (!serverSideRPC.RPC_Subscribe(rpcCbs.cbegin(), rpcCbs.cend())) {
-        Serial.println("[TB] ERROR: No se pudo suscribir a RPC");
-    } else {
-        Serial.println("[TB] Suscrito a 4 métodos RPC");
-    }
+    // NOTA: Las suscripciones ya se hicieron en thingsboard_init(). 
+    // La librería se encarga de resuscribir los tópicos MQTT automáticamente.
 
     // ── Publicar atributos de cliente ─────────────────────
     thingsboard_publish_client_attributes();
