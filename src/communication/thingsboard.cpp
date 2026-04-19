@@ -272,6 +272,13 @@ void thingsboard_loop(void)
         return;
     }
     tb.loop();
+
+    // ── Heartbeat de telemetría (uptime cada 60s) ──────────────
+    static uint32_t last_uptime = 0;
+    if (millis() - last_uptime > 60000) {
+        tb.sendTelemetryData("uptime", millis() / 1000);
+        last_uptime = millis();
+    }
 }
 
 bool thingsboard_is_connected(void)
@@ -365,18 +372,18 @@ bool thingsboard_publish_access_event_with_credential(bool granted, const char* 
     if (match->tipo == 'P') {
         snprintf(json, sizeof(json),
             "{\"accessGranted\":%s,\"accessMethod\":\"%s\","
-            "\"credType\":\"personal\",\"credOwnerId\":%d,"
+            "\"credTipo\":\"personal\",\"credId\":%d,"
             "\"credNombre\":\"%s\",\"credPin\":\"%s\","
-            "\"credActivacion\":\"%s\",\"credExpiracion\":\"%s\"}",
+            "\"credAct\":\"%s\",\"credExp\":\"%s\"}",
             granted ? "true" : "false", method,
             match->owner_id, match->nombre, match->pin,
             match->activacion_str, match->expiracion_str);
     } else {
         snprintf(json, sizeof(json),
             "{\"accessGranted\":%s,\"accessMethod\":\"%s\","
-            "\"credType\":\"huesped\",\"credOwnerId\":%d,"
-            "\"credReservaId\":%d,\"credPin\":\"%s\","
-            "\"credActivacion\":\"%s\",\"credExpiracion\":\"%s\"}",
+            "\"credTipo\":\"huesped\",\"credId\":%d,"
+            "\"reservaId\":%d,\"credPin\":\"%s\","
+            "\"credAct\":\"%s\",\"credExp\":\"%s\"}",
             granted ? "true" : "false", method,
             match->owner_id, match->reserva_id, match->pin,
             match->activacion_str, match->expiracion_str);
