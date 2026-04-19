@@ -39,8 +39,8 @@ static const std::array<IAPI_Implementation*, 2U> apis = {
 
 // Constructor: (client, receive_buffer, send_buffer, max_stack, apis)
 // receive=8192 para soportar JSON de credenciales grandes (~700-2000 bytes)
-// send=256 suficiente para telemetría y atributos pequeños
-static ThingsBoardSized<64> tb(mqttClient, 8192, 256, Default_Max_Stack_Size, apis);
+// send=384 soporta accessEvent JSON serializado (~200 chars + overhead MQTT)
+static ThingsBoardSized<64> tb(mqttClient, 8192, 384, Default_Max_Stack_Size, apis);
 
 // ============================================
 // ESTADO INTERNO
@@ -317,6 +317,67 @@ bool thingsboard_publish_access_event(bool granted, const char* method)
 
     Serial.printf("[TB] Evento: %s via %s\n",
                   granted ? "ACCESO OK" : "DENEGADO", method);
+    return ok;
+}
+
+bool thingsboard_publish_access_event_with_credential(bool granted, const char* method,
+                                                       const CredentialMatch* match)
+{
+    if (!tb.connected()) return false;
+
+    bool ok = true;
+    ok &= tb.sendTelemetryData("accessGranted", granted);
+    ok &= tb.sendTelemetryData("accessMethod",  method);
+
+    if (!match) {
+        Serial.printf("[TB] Evento: %s via %s\n",
+                      granted ? "ACCESO OK" : "DENEGADO", method);
+        return ok;
+    }
+
+    // Construir JSON del cuerpo de la credencial como string serializado
+    char buf[384];
+    int  len = 0;
+    if (match->tipo == 'P') {
+        len = snprintf(buf, sizeof(buf),
+            "{\"type\":\"personal\","
+            "\"personalId\":%d,"
+            "\"nombre\":\"%s\","
+            "\"credencial\":{"
+            "\"pin\":\"%s\","
+            "\"activacion\":\"%s\","
+            "\"expiracion\":\"%s\""
+            "}}",
+            match->owner_id,
+            match->nombre,
+            match->pin,
+            match->activacion_str,
+            match->expiracion_str);
+    } else {
+        len = snprintf(buf, sizeof(buf),
+            "{\"type\":\"huesped\","
+            "\"huespedId\":%d,"
+            "\"reservaId\":%d,"
+            "\"credencial\":{"
+            "\"pin\":\"%s\","
+            "\"activacion\":\"%s\","
+            "\"expiracion\":\"%s\""
+            "}}",
+            match->owner_id,
+            match->reserva_id,
+            match->pin,
+            match->activacion_str,
+            match->expiracion_str);
+    }
+
+    if (len > 0 && len < (int)sizeof(buf)) {
+        ok &= tb.sendTelemetryData("accessEvent", buf);
+    }
+
+    Serial.printf("[TB] Evento: %s via %s (%s id=%d)\n",
+                  granted ? "ACCESO OK" : "DENEGADO", method,
+                  match->tipo == 'P' ? "personal" : "huesped",
+                  match->owner_id);
     return ok;
 }
 

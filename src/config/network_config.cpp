@@ -14,7 +14,7 @@ const char* THINGSBOARD_SERVER = "10.0.0.33";
 const uint16_t THINGSBOARD_PORT = 1883;
 
 // Device Access Token
-const char* THINGSBOARD_ACCESS_TOKEN = "l9qqivFbNcNxuO8lKgjZ";
+const char* THINGSBOARD_ACCESS_TOKEN = "4TG4QsxHbsdAqUp80c0g";
 
 // ============================================
 // ATRIBUTOS COMPARTIDOS ThingsBoard

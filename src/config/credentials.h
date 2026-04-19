@@ -35,6 +35,20 @@
 #define MAX_CREDENTIALS 100
 
 /**
+ * @brief Información completa de la credencial que coincidió en la última validación exitosa.
+ *        Usada para enviar el cuerpo de la credencial a ThingsBoard en eventos de acceso.
+ */
+typedef struct {
+    char tipo;              // 'H' = huesped, 'P' = personal
+    int  owner_id;          // huespedId (H) o personalId (P)
+    int  reserva_id;        // solo para huespedes
+    char nombre[48];        // solo para personal (vacío en huespedes)
+    char pin[16];
+    char activacion_str[24]; // ISO 8601 original, ej "2026-04-17T22:54:18"
+    char expiracion_str[24]; // ISO 8601 original
+} CredentialMatch;
+
+/**
  * @brief Actualiza las credenciales desde el JSON del atributo "credenciales".
  * @param json  JSON serializado con estructura {"huespedes":[...],"personal":[...]}
  * @return true si el JSON fue parseado correctamente
@@ -47,6 +61,13 @@ bool credentials_update(const char* json);
  * @return true si alguna credencial activa coincide
  */
 bool credentials_validate_pin(const String& pin);
+
+/**
+ * @brief Recupera los datos completos de la última credencial validada exitosamente.
+ * @param out  Estructura donde se copia la información (no puede ser nullptr)
+ * @return true si hay una coincidencia disponible
+ */
+bool credentials_get_last_match(CredentialMatch* out);
 
 /** Cantidad de PINs individuales actualmente cargados */
 int credentials_get_count(void);

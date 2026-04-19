@@ -37,6 +37,7 @@
 #include <ThingsBoard.h>
 #include <Arduino_MQTT_Client.h>
 #include "../hardware/lock.h"
+#include "../config/credentials.h"
 
 // ============================================
 // TIPOS DE CALLBACK
@@ -93,6 +94,16 @@ bool thingsboard_publish_lock_state(LockState state);
  * @param method   "pin", "nfc", "remote", "rpc"
  */
 bool thingsboard_publish_access_event(bool granted, const char* method);
+
+/**
+ * @brief Registra un evento de acceso con el cuerpo completo de la credencial.
+ *        Envía accessGranted, accessMethod y accessEvent (JSON serializado con datos del titular).
+ * @param granted  true si fue exitoso
+ * @param method   "pin", "nfc_hce", "nfc_json", etc.
+ * @param match    Credencial que coincidió (puede ser nullptr si no hay info)
+ */
+bool thingsboard_publish_access_event_with_credential(bool granted, const char* method,
+                                                       const CredentialMatch* match);
 
 /** Publica intentos fallidos actuales */
 bool thingsboard_publish_failed_attempts(int count);

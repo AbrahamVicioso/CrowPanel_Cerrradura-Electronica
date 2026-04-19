@@ -58,6 +58,11 @@ static lv_timer_t* nfc_timer = nullptr;
 static volatile bool screen_busy  = false;
 static volatile bool is_unlocking = false;
 
+// Credencial que coincidió en la última autenticación exitosa (PIN o NFC)
+// Se consume en do_unlock para la telemetría y se limpia tras el envío
+static CredentialMatch s_pending_match;
+static bool            s_pending_match_valid = false;
+
 // Config dinámica (puede cambiar via ThingsBoard)
 static uint32_t current_auto_lock_delay = LOCK_AUTO_LOCK_DELAY_MS;
 static bool     nfc_enabled             = true;
@@ -125,7 +130,13 @@ static void do_unlock(const char* method)
 
     lock_unlock();
     thingsboard_publish_lock_state(lock_get_state());
-    thingsboard_publish_access_event(true, method);
+
+    // Publicar evento con cuerpo de credencial si está disponible
+    thingsboard_publish_access_event_with_credential(
+        true, method,
+        s_pending_match_valid ? &s_pending_match : nullptr);
+    s_pending_match_valid = false;  // consumir
+
     display_turn_on();
 
     unlocked_screen_show(current_auto_lock_delay, on_lock_after_unlock);
@@ -166,6 +177,8 @@ static void do_unlock_temporary(uint32_t durationMs)
 
 void on_pin_success(void)
 {
+    // Capturar la credencial que acaba de validar el pinpad antes de desbloquear
+    s_pending_match_valid = credentials_get_last_match(&s_pending_match);
     do_unlock("pin");
 }
 
@@ -411,6 +424,7 @@ void nfc_check_timer_cb(lv_timer_t* timer)
                 Serial.printf("[NFC] PIN extraído via %s\n", nfcMethod);
                 if (credentials_validate_pin(extractedPin)) {
                     Serial.printf("[NFC] PIN válido — desbloqueando via %s\n", nfcMethod);
+                    s_pending_match_valid = credentials_get_last_match(&s_pending_match);
                     do_unlock(nfcMethod);
                 } else {
                     Serial.println("[NFC] PIN no válido o expirado");

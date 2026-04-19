@@ -18,13 +18,22 @@
 
 struct Credential {
     char   pin[16];
-    time_t activacion;  // 0 = sin restricción de inicio
-    time_t expiracion;  // 0 = nunca expira
-    char   tipo;        // 'H' = huesped, 'P' = personal
+    time_t activacion;       // 0 = sin restricción de inicio
+    time_t expiracion;       // 0 = nunca expira
+    char   activacion_str[24]; // ISO 8601 original, para telemetría
+    char   expiracion_str[24]; // ISO 8601 original, para telemetría
+    char   tipo;             // 'H' = huesped, 'P' = personal
+    int    owner_id;         // huespedId (H) o personalId (P)
+    int    reserva_id;       // solo para huespedes
+    char   nombre[48];       // solo para personal (vacío en huespedes)
 };
 
-static Credential s_creds[MAX_CREDENTIALS];
-static int        s_count = 0;
+static Credential    s_creds[MAX_CREDENTIALS];
+static int           s_count = 0;
+
+// Última credencial que coincidió en una validación exitosa
+static CredentialMatch s_last_match;
+static bool            s_last_match_valid = false;
 
 // ============================================
 // HELPERS DE TIEMPO — UTC puro
@@ -72,11 +81,16 @@ static void fmt_time(time_t t, char* buf, size_t len)
 
 /**
  * Extrae credenciales de un JsonArray "credenciales" y las añade a s_creds.
- * @param arr   Array de objetos {pin, activacion, expiracion}
- * @param tipo  'H' o 'P'
- * @return      Número de credenciales añadidas
+ * @param arr        Array de objetos {pin, activacion, expiracion}
+ * @param tipo       'H' o 'P'
+ * @param owner_id   huespedId o personalId
+ * @param reserva_id reservaId (solo huespedes; 0 para personal)
+ * @param nombre     Nombre del personal (solo personal; "" para huespedes)
+ * @return           Número de credenciales añadidas
  */
-static int load_credentials_array(JsonArrayConst arr, char tipo)
+static int load_credentials_array(JsonArrayConst arr, char tipo,
+                                   int owner_id, int reserva_id,
+                                   const char* nombre)
 {
     int added = 0;
     for (JsonVariantConst elem : arr) {
@@ -87,12 +101,23 @@ static int load_credentials_array(JsonArrayConst arr, char tipo)
         const char* pin = cred["pin"] | "";
         if (pin[0] == '\0') continue;  // saltar credenciales sin PIN
 
+        const char* act_str = cred["activacion"] | "";
+        const char* exp_str = cred["expiracion"] | "";
+
         Credential& c = s_creds[s_count];
         strncpy(c.pin, pin, sizeof(c.pin) - 1);
         c.pin[sizeof(c.pin) - 1] = '\0';
-        c.activacion = parse_iso8601(cred["activacion"] | "");
-        c.expiracion = parse_iso8601(cred["expiracion"] | "");
-        c.tipo = tipo;
+        c.activacion = parse_iso8601(act_str);
+        c.expiracion = parse_iso8601(exp_str);
+        strncpy(c.activacion_str, act_str, sizeof(c.activacion_str) - 1);
+        c.activacion_str[sizeof(c.activacion_str) - 1] = '\0';
+        strncpy(c.expiracion_str, exp_str, sizeof(c.expiracion_str) - 1);
+        c.expiracion_str[sizeof(c.expiracion_str) - 1] = '\0';
+        c.tipo       = tipo;
+        c.owner_id   = owner_id;
+        c.reserva_id = reserva_id;
+        strncpy(c.nombre, nombre ? nombre : "", sizeof(c.nombre) - 1);
+        c.nombre[sizeof(c.nombre) - 1] = '\0';
 
         s_count++;
         added++;
@@ -125,9 +150,11 @@ bool credentials_update(const char* json)
             JsonObjectConst h = hv.as<JsonObjectConst>();
             if (h.isNull()) continue;
             n_huespedes++;
+            int huesped_id  = h["huespedId"]  | 0;
+            int reserva_id  = h["reservaId"]  | 0;
             JsonArrayConst creds = h["credenciales"].as<JsonArrayConst>();
             if (!creds.isNull()) {
-                c_huespedes += load_credentials_array(creds, 'H');
+                c_huespedes += load_credentials_array(creds, 'H', huesped_id, reserva_id, "");
             }
         }
     }
@@ -139,9 +166,11 @@ bool credentials_update(const char* json)
             JsonObjectConst p = pv.as<JsonObjectConst>();
             if (p.isNull()) continue;
             n_personal++;
+            int         personal_id = p["personalId"] | 0;
+            const char* nombre      = p["nombre"]     | "";
             JsonArrayConst creds = p["credenciales"].as<JsonArrayConst>();
             if (!creds.isNull()) {
-                c_personal += load_credentials_array(creds, 'P');
+                c_personal += load_credentials_array(creds, 'P', personal_id, 0, nombre);
             }
         }
     }
@@ -227,11 +256,34 @@ bool credentials_validate_pin(const String& pin)
         }
 
         Serial.println("[Creds] Acceso concedido — PIN válido y vigente");
+
+        // Guardar coincidencia para telemetría de acceso
+        s_last_match_valid          = true;
+        s_last_match.tipo           = s_creds[i].tipo;
+        s_last_match.owner_id       = s_creds[i].owner_id;
+        s_last_match.reserva_id     = s_creds[i].reserva_id;
+        strncpy(s_last_match.nombre,        s_creds[i].nombre,        sizeof(s_last_match.nombre)        - 1);
+        strncpy(s_last_match.pin,           s_creds[i].pin,           sizeof(s_last_match.pin)           - 1);
+        strncpy(s_last_match.activacion_str, s_creds[i].activacion_str, sizeof(s_last_match.activacion_str) - 1);
+        strncpy(s_last_match.expiracion_str, s_creds[i].expiracion_str, sizeof(s_last_match.expiracion_str) - 1);
+        s_last_match.nombre[sizeof(s_last_match.nombre) - 1]               = '\0';
+        s_last_match.pin[sizeof(s_last_match.pin) - 1]                     = '\0';
+        s_last_match.activacion_str[sizeof(s_last_match.activacion_str) - 1] = '\0';
+        s_last_match.expiracion_str[sizeof(s_last_match.expiracion_str) - 1] = '\0';
+
         return true;
     }
 
     Serial.println("[Creds] PIN no coincide con ninguna credencial activa");
     return false;
+}
+
+bool credentials_get_last_match(CredentialMatch* out)
+{
+    if (!out || !s_last_match_valid) return false;
+    *out = s_last_match;
+    s_last_match_valid = false;  // consumir — evita reuso en siguiente evento
+    return true;
 }
 
 int credentials_get_count(void)
