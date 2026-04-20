@@ -18,6 +18,7 @@
 
 #include <Shared_Attribute_Update.h>
 #include <Server_Side_RPC.h>
+#include <Attribute_Request.h>
 
 // ============================================
 // INSTANCIAS MQTT / TB
@@ -32,19 +33,26 @@ static Shared_Attribute_Update<1U, 7U> sharedAttrUpdate;
 // Server-side RPC: máx 2 callbacks, respuesta con hasta 2 pares clave-valor
 static Server_Side_RPC<2U, 2U> serverSideRPC;
 
-static const std::array<IAPI_Implementation*, 2U> apis = {
+// Attribute request: solicita valores actuales al conectar (1 request, máx 7 keys)
+static Attribute_Request<1U, 7U> attrRequest;
+
+static const std::array<IAPI_Implementation*, 3U> apis = {
     &sharedAttrUpdate,
-    &serverSideRPC
+    &serverSideRPC,
+    &attrRequest
 };
 
-// Constructor: (client, buffer_size, max_stack_size, max_response_size, apis)
-// buffer_size=16384 para soportar JSON de credenciales grandes (~14KB total en NVS)
-// max_stack_size=2048 para serialización ArduinoJson interna
-// max_response_size=2048 para procesar respuestas de atributos/RPC sin truncamiento
+// Constructor: (client, receive_buffer_size, send_buffer_size, max_stack_size, apis)
+// receive_buffer_size=16384: soporta JSON de credenciales grandes recibidas desde TB
+// send_buffer_size=2048: suficiente para accessEvent con credencial (~512 bytes max)
+// max_stack_size=2048: para serialización ArduinoJson interna
+// ThingsBoardSized<N>: N es el umbral de commas+{+[ permitidos en mensajes entrantes.
+//   N=128 soporta JSONs con hasta 128 de esos caracteres (credenciales con varios huéspedes).
+//   N controla también el tamaño del StaticJsonDocument<JSON_OBJECT_SIZE(N)> en stack (~2KB).
 #if THINGSBOARD_ENABLE_DYNAMIC
-static ThingsBoardSized<64> tb(mqttClient, 16384, 2048, 2048, 0, apis);
+static ThingsBoardSized<128> tb(mqttClient, 16384, 2048, 2048, 0, apis);
 #else
-static ThingsBoardSized<64> tb(mqttClient, 16384, 2048, 2048, apis);
+static ThingsBoardSized<128> tb(mqttClient, 16384, 2048, 2048, apis);
 #endif
 
 // ============================================
@@ -248,8 +256,28 @@ bool thingsboard_connect(void)
     Serial.println("[TB] Conectado!");
     tbConnected = true;
 
-    // NOTA: Las suscripciones ya se hicieron en thingsboard_init(). 
-    // La librería se encarga de resuscribir los tópicos MQTT automáticamente.
+    // ── Solicitar valores actuales de shared attributes ────────────────────
+    // Shared_Attribute_Update solo recibe actualizaciones FUTURAS.
+    // Shared_Attributes_Request obtiene los valores ya guardados en ThingsBoard,
+    // necesario para recibir credenciales/config existentes al reconectar.
+    {
+        const std::array<const char*, 7U> reqKeys = {{
+            ATTR_LOCK_STATE,
+            ATTR_CREDENTIALS,
+            ATTR_AUTO_LOCK_DELAY,
+            ATTR_NFC_ENABLED,
+            ATTR_NFC_UID,
+            ATTR_MAX_FAILED,
+            ATTR_LOCKOUT_DURATION
+        }};
+        Attribute_Request_Callback<7U> reqCb(processSharedAttributes, 0U, nullptr,
+                                              reqKeys.cbegin(), reqKeys.cend());
+        if (!attrRequest.Shared_Attributes_Request(reqCb)) {
+            Serial.println("[TB] WARN: No se pudo solicitar shared attributes actuales");
+        } else {
+            Serial.println("[TB] Solicitando valores actuales de shared attributes...");
+        }
+    }
 
     // ── Publicar atributos de cliente ─────────────────────
     thingsboard_publish_client_attributes();
