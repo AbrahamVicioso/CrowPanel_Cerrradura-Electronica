@@ -155,6 +155,52 @@ void nfc_print_uid(uint8_t* uid, uint8_t uidLength)
 }
 
 // ────────────────────────────────────────────────────────────
+//  Activación ISO-DEP (interna)
+// ────────────────────────────────────────────────────────────
+
+// Envía el comando InAtr (0x50) al PN532, que a su vez envía RATS al target
+// y establece el canal ISO 14443-4. Debe llamarse después de readPassiveTargetID.
+// Ref: PN532 UM10232 §7.3.11 InAtr
+static bool nfc_activate_isodep(void)
+{
+    // InAtr: [cmd=0x50][Tg=1][NextRf=0x00][GiLength=0]
+    // Envía RATS al target y establece canal ISO 14443-4
+    uint8_t cmd[] = { 0x50, 0x01, 0x00, 0x00 };
+
+    if (!nfc.sendCommandCheckAck(cmd, sizeof(cmd), 1000)) {
+        Serial.println("[NFC] InAtr: command timeout");
+        return false;
+    }
+
+    // readdata() es privado — leer respuesta InAtr directamente via Wire
+    // I2C PN532 packet: [status][00][00][FF][LEN][LCS][D5][51][Err][Tg][ATS...]
+    //  byte 0: status RDY (descartado)
+    //  byte 1-3: preamble + start code (descartados)
+    //  byte 4-5: LEN + LCS (descartados)
+    //  byte 6: TFI 0xD5 (descartado)
+    //  byte 7: respuesta InAtr = 0x51
+    //  byte 8: Err (0x00 = OK)
+    Wire.requestFrom((uint8_t)PN532_I2C_ADDRESS, (uint8_t)10);
+    if (Wire.available() < 9) {
+        Serial.println("[NFC] InAtr: respuesta incompleta");
+        while (Wire.available()) Wire.read();
+        return false;
+    }
+    for (int i = 0; i < 7; i++) Wire.read();  // descarta status + preamble + TFI
+    uint8_t cmdResp = Wire.read();  // debe ser 0x51
+    uint8_t err     = Wire.read();  // 0x00 = éxito
+    while (Wire.available()) Wire.read();  // vaciar resto (Tg, ATS...)
+
+    if (cmdResp != 0x51 || err != 0x00) {
+        Serial.printf("[NFC] InAtr error: cmd=%02X err=%02X\n", cmdResp, err);
+        return false;
+    }
+
+    Serial.println("[NFC] ISO-DEP activado (RATS OK)");
+    return true;
+}
+
+// ────────────────────────────────────────────────────────────
 //  Lectura JSON via HCE (smartphone)
 // ────────────────────────────────────────────────────────────
 
@@ -162,25 +208,49 @@ bool nfc_read_hce_payload(char* buffer, uint16_t maxLen)
 {
     if (!buffer || maxLen < 2) return false;
 
-    // Construir APDU SELECT AID: CLA INS P1 P2 Lc [AID bytes]
+    // Activar canal ISO-DEP (envía RATS) antes de cualquier APDU
+    if (!nfc_activate_isodep()) {
+        return false;
+    }
+
     uint8_t aid[] = HCE_AID;
     const uint8_t aidLen = sizeof(aid);
-
-    uint8_t cmd[5 + aidLen];
-    cmd[0] = 0x00;   // CLA
-    cmd[1] = 0xA4;   // INS: SELECT FILE
-    cmd[2] = 0x04;   // P1: select by AID
-    cmd[3] = 0x00;   // P2: primera ocurrencia
-    cmd[4] = aidLen; // Lc: longitud del AID
-    memcpy(&cmd[5], aid, aidLen);
-
     uint8_t response[255];
     uint8_t respLen = sizeof(response);
 
-    if (!nfc.inDataExchange(cmd, sizeof(cmd), response, &respLen)) {
-        // La tarjeta/dispositivo no responde a APDUs — no es HCE
+    // Intentar primero con AID personalizado
+    // Si falla, intentar con AID NDEF estándar
+    Serial.println("[NFC] SELECT personalizado F0010203040506...");
+    uint8_t cmd[6 + aidLen];
+    cmd[0] = 0x00; cmd[1] = 0xA4; cmd[2] = 0x04; cmd[3] = 0x00;
+    cmd[4] = aidLen;
+    memcpy(&cmd[5], aid, aidLen);
+    cmd[5 + aidLen] = 0x00;
+
+    nfc.PrintHex(cmd, sizeof(cmd));
+    bool ok = nfc.inDataExchange(cmd, sizeof(cmd), response, &respLen);
+
+    if (!ok) {
+        Serial.println("[NFC] SELECT NDEF estándar...");
+        uint8_t ndef_aid[] = { 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00 };
+        uint8_t cmd2[6 + 8];
+        cmd2[0] = 0x00; cmd2[1] = 0xA4; cmd2[2] = 0x04; cmd2[3] = 0x00;
+        cmd2[4] = 8;
+        memcpy(&cmd2[5], ndef_aid, 8);
+        cmd2[5 + 8] = 0x00;
+        
+        nfc.PrintHex(cmd2, sizeof(cmd2));
+        ok = nfc.inDataExchange(cmd2, sizeof(cmd2), response, &respLen);
+    }
+
+    if (!ok) {
+        Serial.print("[NFC] ERROR: ");
+        nfc.PrintHex(response, min(respLen, (uint8_t)4));
         return false;
     }
+
+    Serial.printf("[NFC] HCE respuesta (%u bytes): ", respLen);
+    nfc.PrintHexChar(response, respLen);
 
     // Verificar Status Word: últimos 2 bytes deben ser 90 00
     if (respLen < 2 || response[respLen - 2] != 0x90 || response[respLen - 1] != 0x00) {

@@ -100,6 +100,15 @@ static lv_obj_t* create_line(lv_obj_t* parent,
 static void update_clock(void)
 {
     time_t now = time(nullptr);
+
+    // Mostrar placeholder hasta que NTP esté sincronizado
+    if (now < 1700000000L) {
+        if (label_hours) lv_label_set_text(label_hours, "--");
+        if (label_mins)  lv_label_set_text(label_mins,  "--");
+        if (label_date)  lv_label_set_text(label_date,  "SINCRONIZANDO HORA...");
+        return;
+    }
+
     struct tm* t = localtime(&now);
 
     static char hh[4], mm[4], date_str[80];
@@ -109,7 +118,6 @@ static void update_clock(void)
 
     if (label_hours && label_colon) {
         lv_label_set_text(label_hours, hh);
-        // Re-alinear: el texto cambió de ancho, hay que recalcular posición
         lv_obj_align_to(label_hours, label_colon, LV_ALIGN_OUT_LEFT_MID, -4, 0);
     }
     if (label_mins && label_colon) {
@@ -117,14 +125,22 @@ static void update_clock(void)
         lv_obj_align_to(label_mins, label_colon, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
     }
 
-    // Fecha en español: "DOMINGO, 22 DE FEBRERO"
-    // Usamos strftime con locale — si el sistema está en es_ES devolverá español.
-    // Fallback: los nombres estarán en inglés si el locale no está configurado.
-    strftime(date_str, sizeof(date_str), "%A, %d DE %B", t);
-    for (int i = 0; date_str[i]; i++) {
-        if (date_str[i] >= 'a' && date_str[i] <= 'z')
-            date_str[i] -= 32;
-    }
+    // Fecha en español (ESP32 no tiene soporte de locale, usar arrays manuales)
+    static const char* dias_es[] = {
+        "DOMINGO", "LUNES", "MARTES", "MIERCOLES",
+        "JUEVES",  "VIERNES", "SABADO"
+    };
+    static const char* meses_es[] = {
+        "ENERO", "FEBRERO", "MARZO",     "ABRIL",
+        "MAYO",  "JUNIO",   "JULIO",     "AGOSTO",
+        "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"
+    };
+
+    snprintf(date_str, sizeof(date_str), "%s, %02d DE %s",
+             dias_es[t->tm_wday],
+             t->tm_mday,
+             meses_es[t->tm_mon]);
+
     if (label_date) lv_label_set_text(label_date, date_str);
 }
 

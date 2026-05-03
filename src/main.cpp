@@ -684,13 +684,29 @@ void setup()
 
 void sync_time_ntp(void)
 {
-    // Timezone: República Dominicana (AST, UTC-4, sin DST)
-    setenv("TZ", "AST4", 1);
-    tzset();
-    
-    // Configuración NTP no bloqueante
-    configTime(-4 * 3600, 0, "pool.ntp.org", "time.google.com");
-    Serial.println("[NTP] Configurado (sincronización en segundo plano)");
+    // República Dominicana: AST = UTC-4, sin DST
+    // configTzTime configura NTP + zona horaria en una sola llamada
+    configTzTime("AST4", "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+
+    Serial.println("[NTP] Servidores configurados, esperando sincronización...");
+
+    // Esperar hasta 8 segundos por primera sincronización
+    time_t now = 0;
+    uint8_t retries = 0;
+    while ((now = time(nullptr)) < 1700000000L && retries < 80) {
+        delay(100);
+        retries++;
+    }
+
+    if (now > 1700000000L) {
+        struct tm t;
+        getLocalTime(&t);
+        Serial.printf("[NTP] Sincronizado: %04d-%02d-%02d %02d:%02d:%02d AST (UTC-4)\n",
+            t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+            t.tm_hour, t.tm_min, t.tm_sec);
+    } else {
+        Serial.println("[NTP] WARN: timeout — sin sincronización tras 8s");
+    }
 }
 
 void loop()
