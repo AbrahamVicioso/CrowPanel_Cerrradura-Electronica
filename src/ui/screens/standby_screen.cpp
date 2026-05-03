@@ -346,15 +346,9 @@ lv_obj_t* standby_screen_create(void)
     lv_obj_set_width(label_hint, 800);
     lv_obj_set_style_text_align(label_hint, LV_TEXT_ALIGN_CENTER, 0);
 
-    // ── Área de toque (transparente, todo el fondo) ──────
-    lv_obj_t* touch_area = lv_obj_create(standby_screen);
-    lv_obj_set_size(touch_area, 800, 480);
-    lv_obj_set_pos(touch_area, 0, 0);
-    lv_obj_set_style_bg_opa(touch_area, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(touch_area, 0, 0);
-    lv_obj_clear_flag(touch_area, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(touch_area, screen_touch_cb, LV_EVENT_PRESSED,  NULL);
-    lv_obj_add_event_cb(touch_area, screen_touch_cb, LV_EVENT_RELEASED, NULL);
+    // Eventos de toque directo en la pantalla — sin objeto overlay adicional
+    lv_obj_add_event_cb(standby_screen, screen_touch_cb, LV_EVENT_PRESSED,  NULL);
+    lv_obj_add_event_cb(standby_screen, screen_touch_cb, LV_EVENT_RELEASED, NULL);
 
     // ── Inicializar y arrancar timers ────────────────────
     update_clock();

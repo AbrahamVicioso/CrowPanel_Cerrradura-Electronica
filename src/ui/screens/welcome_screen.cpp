@@ -21,58 +21,60 @@ lv_obj_t* welcome_screen_create(void)
 {
     welcome_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(welcome_screen, COLOR_PRIMARY, 0);
+    lv_obj_clear_flag(welcome_screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ==================== LOGO SECTION ====================
-    
-    // Icono de candado grande (círculo decorativo sin sombra)
+    // Círculo icono — centrado, 1/3 superior de pantalla
+    // lv_obj_align pone el CENTRO del obj en (screen_cx + ox, screen_cy + oy)
+    // screen_cy=240, circle_half=70 → top = 240-90-70 = 80
     lv_obj_t* circle_bg = lv_obj_create(welcome_screen);
     lv_obj_set_size(circle_bg, 140, 140);
-    lv_obj_set_pos(circle_bg, 330, 100);
     lv_obj_set_style_bg_color(circle_bg, lv_color_hex(0xe94560), 0);
     lv_obj_set_style_border_width(circle_bg, 0, 0);
     lv_obj_set_style_radius(circle_bg, 70, 0);
-    // Shadow removido - era costoso en CPU
+    lv_obj_clear_flag(circle_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(circle_bg, LV_ALIGN_CENTER, 0, -90);
 
-    // Icono de candado usando símbolos LVGL
-    lv_obj_t *lock_icon = lv_label_create(circle_bg);
-    lv_label_set_text(lock_icon, LV_SYMBOL_LOOP);
+    lv_obj_t* lock_icon = lv_label_create(circle_bg);
+    lv_label_set_text(lock_icon, LV_SYMBOL_HOME);
     lv_obj_set_style_text_font(lock_icon, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(lock_icon, COLOR_TEXT, 0);
     lv_obj_center(lock_icon);
 
-    // Título principal
-    lv_obj_t *label_title = lv_label_create(welcome_screen);
-    lv_label_set_text(label_title, "SISTEMA DE");
+    // Texto principal centrado
+    lv_obj_t* label_title = lv_label_create(welcome_screen);
+    lv_label_set_text(label_title, "SISTEMA DE CERRADURA");
     lv_obj_set_style_text_font(label_title, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(label_title, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_set_pos(label_title, 0, 260);
-    lv_obj_set_width(label_title, 800);
+    lv_obj_set_style_text_align(label_title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label_title, 700);
+    lv_obj_align(label_title, LV_ALIGN_CENTER, 0, 18);
 
-    // Subtítulo (nombre del sistema)
-    lv_obj_t *label_subtitle = lv_label_create(welcome_screen);
-    lv_label_set_text(label_subtitle, "CERRADURA ELECTRONICA");
-    lv_obj_set_style_text_font(label_subtitle, &lv_font_montserrat_24, 0);  // Cambiado de 28 a 24 (optimización)
+    lv_obj_t* label_subtitle = lv_label_create(welcome_screen);
+    lv_label_set_text(label_subtitle, "ELECTRONICA");
+    lv_obj_set_style_text_font(label_subtitle, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(label_subtitle, COLOR_TEXT, 0);
-    lv_obj_set_style_text_letter_space(label_subtitle, 2, 0);
-    lv_obj_set_pos(label_subtitle, 0, 295);
-    lv_obj_set_width(label_subtitle, 800);
+    lv_obj_set_style_text_letter_space(label_subtitle, 4, 0);
+    lv_obj_set_style_text_align(label_subtitle, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label_subtitle, 700);
+    lv_obj_align(label_subtitle, LV_ALIGN_CENTER, 0, 60);
 
-    // Línea decorativa
+    // Línea decorativa bajo el título
     lv_obj_t* line = lv_obj_create(welcome_screen);
-    lv_obj_set_size(line, 150, 3);
-    lv_obj_set_pos(line, 325, 345);
+    lv_obj_set_size(line, 160, 2);
     lv_obj_set_style_bg_color(line, COLOR_ACCENT, 0);
-    lv_obj_set_style_radius(line, 2, 0);
+    lv_obj_set_style_border_width(line, 0, 0);
+    lv_obj_set_style_radius(line, 1, 0);
+    lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(line, LV_ALIGN_CENTER, 0, 90);
 
-    // ==================== LOADING SECTION ====================
-    
-    // Loading indicator simple (reemplazado spinner costoso)
-    lv_obj_t *label_loading = lv_label_create(welcome_screen);
+    // Texto de carga — abajo
+    lv_obj_t* label_loading = lv_label_create(welcome_screen);
     lv_label_set_text(label_loading, "Inicializando...");
     lv_obj_set_style_text_font(label_loading, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(label_loading, COLOR_TEXT_MUTED, 0);
-    lv_obj_set_pos(label_loading, 0, 420);
-    lv_obj_set_width(label_loading, 800);
+    lv_obj_set_style_text_align(label_loading, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label_loading, 700);
+    lv_obj_align(label_loading, LV_ALIGN_BOTTOM_MID, 0, -24);
 
     return welcome_screen;
 }
@@ -80,18 +82,11 @@ lv_obj_t* welcome_screen_create(void)
 /**
  * @brief Callback de animación
  */
-static void animation_callback(lv_timer_t *timer)
+static void animation_callback(lv_timer_t* timer)
 {
-    static int counter = 0;
-    counter++;
-
-    if (counter >= 50)  // Wait about 1 second (50 * 20ms)
-    {
-        lv_timer_del(timer);
-        if (next_screen != nullptr) {
-            // Transición elegante con fade
-            lv_scr_load_anim(next_screen, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-        }
+    lv_timer_del(timer);
+    if (next_screen != nullptr) {
+        lv_scr_load_anim(next_screen, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     }
 }
 
@@ -101,6 +96,8 @@ static void animation_callback(lv_timer_t *timer)
 void welcome_screen_animate_to(lv_obj_t* screen_next)
 {
     next_screen = screen_next;
-    display_turn_on();  // Asegurar que el backlight estéendido
-    lv_timer_t *timer = lv_timer_create(animation_callback, 20, NULL);
+    display_turn_on();
+    // Un solo timer de 1000ms — antes era 50×20ms = 50 callbacks innecesarios
+    lv_timer_t* timer = lv_timer_create(animation_callback, 1000, NULL);
+    lv_timer_set_repeat_count(timer, 1);
 }

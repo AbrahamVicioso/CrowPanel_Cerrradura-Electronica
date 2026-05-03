@@ -27,6 +27,8 @@ void pinpad_set_error_callback(PinpadErrorCallback cb);
 void pinpad_set_failed_attempts_callback(PinpadFailedAttemptsCallback cb);
 /** Llamado cuando expira el timer de inactividad */
 void pinpad_set_inactivity_callback(void (*callback)(void));
+/** Llamado cuando el usuario toca el botón Inicio (volver a standby) */
+void pinpad_set_back_callback(void (*callback)(void));
 
 // ── Control de PIN ───────────────────────────────────────────
 void        pinpad_reset(void);

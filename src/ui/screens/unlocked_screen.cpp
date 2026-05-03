@@ -16,58 +16,55 @@ lv_obj_t* unlocked_screen_create(void)
 {
     screen_unlocked = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(screen_unlocked, COLOR_PRIMARY, 0);
+    lv_obj_clear_flag(screen_unlocked, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ==================== SUCCESS ICON ====================
-    
-    // Círculo grande de éxito (sin sombra para mejor rendimiento)
-    lv_obj_t *circle_bg = lv_obj_create(screen_unlocked);
+    // Círculo éxito — centrado en 1/3 superior
+    lv_obj_t* circle_bg = lv_obj_create(screen_unlocked);
     lv_obj_set_size(circle_bg, 150, 150);
-    lv_obj_set_pos(circle_bg, 325, 80);
     lv_obj_set_style_bg_color(circle_bg, COLOR_SUCCESS, 0);
     lv_obj_set_style_border_width(circle_bg, 0, 0);
     lv_obj_set_style_radius(circle_bg, 75, 0);
-    // Shadow removido - era costoso en CPU
+    lv_obj_clear_flag(circle_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(circle_bg, LV_ALIGN_CENTER, 0, -80);
 
-    // Checkmark icon
-    lv_obj_t *icon_check = lv_label_create(circle_bg);
+    lv_obj_t* icon_check = lv_label_create(circle_bg);
     lv_label_set_text(icon_check, LV_SYMBOL_OK);
     lv_obj_set_style_text_font(icon_check, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(icon_check, lv_color_white(), 0);
     lv_obj_center(icon_check);
 
-    // ==================== MESSAGE ====================
-    
-    // Texto de éxito principal
-    lv_obj_t *label_success = lv_label_create(screen_unlocked);
+    // Texto principal
+    lv_obj_t* label_success = lv_label_create(screen_unlocked);
     lv_label_set_text(label_success, "ACCESO CONCEDIDO");
     lv_obj_set_style_text_font(label_success, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(label_success, COLOR_SUCCESS, 0);
     lv_obj_set_style_text_letter_space(label_success, 2, 0);
-    lv_obj_set_pos(label_success, 0, 250);
-    lv_obj_set_width(label_success, 800);
+    lv_obj_set_style_text_align(label_success, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label_success, 700);
+    lv_obj_align(label_success, LV_ALIGN_CENTER, 0, 30);
 
-    // Mensaje de bienvenida
-    lv_obj_t *label_welcome = lv_label_create(screen_unlocked);
+    lv_obj_t* label_welcome = lv_label_create(screen_unlocked);
     lv_label_set_text(label_welcome, "Bienvenido");
-    lv_obj_set_style_text_font(label_welcome, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(label_welcome, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(label_welcome, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_set_pos(label_welcome, 0, 290);
-    lv_obj_set_width(label_welcome, 800);
+    lv_obj_set_style_text_align(label_welcome, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(label_welcome, 700);
+    lv_obj_align(label_welcome, LV_ALIGN_CENTER, 0, 68);
 
-    // ==================== STATUS BAR ====================
-    
-    lv_obj_t *status_bar = lv_obj_create(screen_unlocked);
-    lv_obj_set_size(status_bar, 800, 50);
-    lv_obj_set_pos(status_bar, 0, 430);
+    // Barra inferior
+    lv_obj_t* status_bar = lv_obj_create(screen_unlocked);
+    lv_obj_set_size(status_bar, 800, 44);
     lv_obj_set_style_bg_color(status_bar, COLOR_SECONDARY, 0);
     lv_obj_set_style_border_width(status_bar, 0, 0);
+    lv_obj_set_style_radius(status_bar, 0, 0);
+    lv_obj_clear_flag(status_bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_align(status_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
 
-    // Estado
-    lv_obj_t *label_status = lv_label_create(status_bar);
+    lv_obj_t* label_status = lv_label_create(status_bar);
     lv_label_set_text(label_status, "Puerta desbloqueada");
     lv_obj_set_style_text_font(label_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(label_status, COLOR_TEXT_SECONDARY, 0);
-    lv_obj_set_pos(label_status, 20, 15);
+    lv_obj_align(label_status, LV_ALIGN_CENTER, 0, 0);
 
     return screen_unlocked;
 }

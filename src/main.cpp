@@ -640,6 +640,10 @@ void setup()
         display_turn_on();
         lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     });
+    pinpad_set_back_callback([]() {
+        screen_busy = false;
+        lv_scr_load_anim(screen_standby, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    });
 
     // Callback tap en standby → abrir pinpad
     standby_screen_set_tap_callback([]() {
