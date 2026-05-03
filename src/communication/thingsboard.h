@@ -3,7 +3,6 @@
  * @brief Módulo ThingsBoard — shared attributes, RPC, telemetría
  *
  * Atributos compartidos recibidos (TB Dashboard → Dispositivo):
- *   lockState          "locked"/"unlocked"
  *   credenciales       array JSON de credenciales
  *   autoLockDelay      ms (entero)
  *   nfcEnabled         bool
@@ -12,12 +11,13 @@
  *   lockoutDuration    segundos
  *
  * Comandos RPC recibidos (TB Dashboard → Dispositivo):
+ *   unlock             → desbloquear  { "lockState": "unlocked" }
  *   unlockTemporary    → desbloquear N ms  { "duration": 5000 }
  *   resetLockout       → limpiar bloqueo de intentos
  *
- * Control lock/unlock: vía shared attribute "lockState" ("locked"/"unlocked")
- *   - Dashboard → Dispositivo: TB actualiza shared attr → dispositivo reacciona
- *   - Dispositivo → Dashboard: dispositivo publica client attr "lockState"
+ * Control unlock: vía RPC "unlock" — lockState ya NO es shared attribute.
+ *   - Dashboard → Dispositivo: TB llama RPC "unlock" → dispositivo abre
+ *   - Dispositivo → Dashboard: publica client attr "lockState" para visibilidad
  *
  * Telemetría enviada (Dispositivo → TB):
  *   locked             bool

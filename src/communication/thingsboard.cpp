@@ -27,14 +27,14 @@
 static WiFiClient    wifiClient;
 static Arduino_MQTT_Client mqttClient(wifiClient);
 
-// Shared attributes: 1 suscripción, máx 7 atributos
-static Shared_Attribute_Update<1U, 7U> sharedAttrUpdate;
+// Shared attributes: 1 suscripción, máx 6 atributos (lockState eliminado — ahora es RPC)
+static Shared_Attribute_Update<1U, 6U> sharedAttrUpdate;
 
-// Server-side RPC: máx 2 callbacks, respuesta con hasta 2 pares clave-valor
-static Server_Side_RPC<2U, 2U> serverSideRPC;
+// Server-side RPC: 3 callbacks (unlock, unlockTemporary, resetLockout)
+static Server_Side_RPC<3U, 2U> serverSideRPC;
 
-// Attribute request: solicita valores actuales al conectar (1 request, máx 7 keys)
-static Attribute_Request<1U, 7U> attrRequest;
+// Attribute request: solicita valores actuales al conectar (1 request, máx 6 keys)
+static Attribute_Request<1U, 6U> attrRequest;
 
 static const std::array<IAPI_Implementation*, 3U> apis = {
     &sharedAttrUpdate,
@@ -59,9 +59,8 @@ static ThingsBoardSized<128> tb(mqttClient, 16384, 2048, 2048, apis);
 // ESTADO INTERNO
 // ============================================
 
-static bool     tbConnected               = false;
-static uint32_t lastConnectAttempt        = 0;
-static bool     isProcessingRemoteChange  = false;
+static bool     tbConnected        = false;
+static uint32_t lastConnectAttempt = 0;
 
 // ============================================
 // CALLBACKS REGISTRADOS EXTERNAMENTE
@@ -88,19 +87,6 @@ static RpcResetLockoutCallback  rpcResetLockoutCb   = nullptr;
 static void processSharedAttributes(const JsonObjectConst& data)
 {
     Serial.println("[TB] Shared attributes recibidos:");
-
-    // ── lockState ────────────────────────────────────────────
-    if (data.containsKey(ATTR_LOCK_STATE)) {
-        const char* val = data[ATTR_LOCK_STATE];
-        bool shouldLock = (strcmp(val, "locked") == 0);
-        Serial.printf("  lockState = %s\n", val);
-
-        if (!isProcessingRemoteChange && stateChangeCb) {
-            isProcessingRemoteChange = true;
-            stateChangeCb(shouldLock);
-            isProcessingRemoteChange = false;
-        }
-    }
 
     // ── credenciales ─────────────────────────────────────────
     if (data.containsKey(ATTR_CREDENTIALS)) {
@@ -171,6 +157,19 @@ static void processSharedAttributes(const JsonObjectConst& data)
 //   void callback(JsonVariantConst const& params, JsonDocument& response)
 // ============================================
 
+static void on_rpc_unlock(JsonVariantConst const& data, JsonDocument& response)
+{
+    // params = {"lockState": "unlocked"} — validar o ignorar el param
+    const char* state = nullptr;
+    if (!data.isNull() && data.containsKey("lockState")) {
+        state = data["lockState"].as<const char*>();
+    }
+    Serial.printf("[TB] RPC: unlock (lockState=%s)\n", state ? state : "N/A");
+
+    if (stateChangeCb) stateChangeCb(false);  // false = desbloquear
+    response["result"] = "ok";
+}
+
 static void on_rpc_unlock_temporary(JsonVariantConst const& data, JsonDocument& response)
 {
     uint32_t duration = 5000;
@@ -204,8 +203,8 @@ void thingsboard_init(void)
     // ── Suscripción ÚNICA a Shared Attributes ──────────────────
     // Se hace en init() porque la librería gestiona la resuscripción automática al reconectar.
     // Esto evita el error "Too many (MaxSubscriptions) subscriptions".
-    const std::array<const char*, 7U> attrs = {{
-        ATTR_LOCK_STATE,
+    // lockState eliminado — control de lock ahora es via RPC "unlock"
+    const std::array<const char*, 6U> attrs = {{
         ATTR_CREDENTIALS,
         ATTR_AUTO_LOCK_DELAY,
         ATTR_NFC_ENABLED,
@@ -213,7 +212,7 @@ void thingsboard_init(void)
         ATTR_MAX_FAILED,
         ATTR_LOCKOUT_DURATION
     }};
-    Shared_Attribute_Callback<7U> attrCb(processSharedAttributes,
+    Shared_Attribute_Callback<6U> attrCb(processSharedAttributes,
                                           attrs.cbegin(), attrs.cend());
     if (!sharedAttrUpdate.Shared_Attributes_Subscribe(attrCb)) {
         Serial.println("[TB] ERROR: No se pudo registrar suscripción a shared attributes");
@@ -222,7 +221,8 @@ void thingsboard_init(void)
     }
 
     // ── Suscripción ÚNICA a RPC ──────────────────────────────
-    const std::array<RPC_Callback, 2U> rpcCbs = {{
+    const std::array<RPC_Callback, 3U> rpcCbs = {{
+        RPC_Callback{ "unlock",          on_rpc_unlock           },
         RPC_Callback{ "unlockTemporary", on_rpc_unlock_temporary },
         RPC_Callback{ "resetLockout",    on_rpc_reset_lockout    }
     }};
@@ -261,8 +261,7 @@ bool thingsboard_connect(void)
     // Shared_Attributes_Request obtiene los valores ya guardados en ThingsBoard,
     // necesario para recibir credenciales/config existentes al reconectar.
     {
-        const std::array<const char*, 7U> reqKeys = {{
-            ATTR_LOCK_STATE,
+        const std::array<const char*, 6U> reqKeys = {{
             ATTR_CREDENTIALS,
             ATTR_AUTO_LOCK_DELAY,
             ATTR_NFC_ENABLED,
@@ -270,7 +269,7 @@ bool thingsboard_connect(void)
             ATTR_MAX_FAILED,
             ATTR_LOCKOUT_DURATION
         }};
-        Attribute_Request_Callback<7U> reqCb(processSharedAttributes, 0U, nullptr,
+        Attribute_Request_Callback<6U> reqCb(processSharedAttributes, 0U, nullptr,
                                               reqKeys.cbegin(), reqKeys.cend());
         if (!attrRequest.Shared_Attributes_Request(reqCb)) {
             Serial.println("[TB] WARN: No se pudo solicitar shared attributes actuales");
@@ -346,17 +345,13 @@ bool thingsboard_publish_lock_state(LockState state)
     bool locked = (state == LockState::LOCKED);
     const char* stateStr = locked ? "locked" : "unlocked";
 
-    // Telemetría (serie temporal) — siempre se envía, incluso en cambios remotos
+    // Telemetría + atributo cliente (para visibilidad en dashboard)
     bool ok1 = tb.sendTelemetryData("locked", locked);
-    if (ok1) tb.loop(); // Forzar procesamiento inmediato
+    if (ok1) tb.loop();
     if (!ok1) Serial.println("[TB] ERROR: sendTelemetryData(locked) falló");
 
-    // Atributo cliente — omitir durante cambio remoto para evitar feedback loop
-    bool ok2 = true;
-    if (!isProcessingRemoteChange) {
-        ok2 = tb.sendAttributeData(ATTR_LOCK_STATE, stateStr);
-        if (!ok2) Serial.println("[TB] ERROR: sendAttributeData(lockState) falló");
-    }
+    bool ok2 = tb.sendAttributeData("lockState", stateStr);
+    if (!ok2) Serial.println("[TB] ERROR: sendAttributeData(lockState) falló");
 
     if (ok1) Serial.printf("[TB] Telemetría publicada: locked=%s\n", stateStr);
     return ok1 && ok2;

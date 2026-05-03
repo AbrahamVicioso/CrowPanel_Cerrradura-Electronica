@@ -322,8 +322,7 @@ void loop() {
 
 ### Shared Attributes (Configuración Remota)
 ```cpp
-// Atributos suscritos (7 total)
-static const char* ATTR_LOCK_STATE = "lockState";
+// Atributos suscritos (6 total) — lockState eliminado, ahora es RPC
 static const char* ATTR_CREDENTIALS = "credenciales";   // objeto JSON con huespedes + personal
 static const char* ATTR_AUTO_LOCK_DELAY = "autoLockDelay";
 static const char* ATTR_NFC_ENABLED = "nfcEnabled";
@@ -365,11 +364,12 @@ static const char* ATTR_LOCKOUT_DURATION = "lockoutDuration";
 - **REGLA**: iteración sobre JsonArrayConst → usar `for (JsonVariantConst v : arr)` + `v.as<JsonObjectConst>()` explícito (la conversión implícita `for (JsonObjectConst obj : arr)` puede silenciosamente retornar null en ArduinoJson 6.21.5)
 
 ### RPC Server-side (Control Remoto)
-Implementados 2 métodos RPC (lock/unlock se manejan via shared attribute `lockState`):
-| Método          | Params                  | Descripción               |
-|-----------------|-------------------------|---------------------------|
-| unlockTemporary | `{"duration": 5000}`    | Desbloquear N ms (1s-5min)|
-| resetLockout    | —                       | (stub, lockout eliminado) |
+Implementados 3 métodos RPC:
+| Método          | Params                        | Descripción               |
+|-----------------|-------------------------------|---------------------------|
+| unlock          | `{"lockState": "unlocked"}`   | Desbloquear puerta        |
+| unlockTemporary | `{"duration": 5000}`          | Desbloquear N ms (1s-5min)|
+| resetLockout    | —                             | (stub, lockout eliminado) |
 
 ### Telemetría
 ```cpp
