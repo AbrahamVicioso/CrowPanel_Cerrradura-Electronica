@@ -41,8 +41,8 @@ static bool            s_last_match_valid = false;
 
 /**
  * Convierte fecha/hora UTC a Unix timestamp (time_t) usando el
- * algoritmo civil de Howard Hinnant. No depende de mktime ni del
- * timezone configurado en el sistema.
+ * algoritmo civil de Howard Hinnant. Solo usar para timestamps
+ * explícitamente UTC (con sufijo 'Z'). Para hora local usar mktime.
  */
 static time_t civil_to_time_t(int y, int mo, int d, int h, int mi, int s)
 {
@@ -56,8 +56,10 @@ static time_t civil_to_time_t(int y, int mo, int d, int h, int mi, int s)
 }
 
 /**
- * Parsea fecha ISO 8601 UTC: "2026-04-17T22:54:18.8207937"
- * Ignora fracción de segundos y sufijo 'Z' si existe.
+ * Parsea fecha ISO 8601 a Unix timestamp UTC.
+ * - Sin sufijo 'Z' → hora local del dispositivo (AST = UTC-4). Usa mktime.
+ * - Con sufijo 'Z'  → UTC explícito. Usa algoritmo Hinnant.
+ * El servidor envía hora local de República Dominicana sin 'Z'.
  * @return Unix timestamp UTC, o 0 si el parseo falla.
  */
 static time_t parse_iso8601(const char* str)
@@ -65,7 +67,25 @@ static time_t parse_iso8601(const char* str)
     if (!str || str[0] == '\0') return 0;
     int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
     if (sscanf(str, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) < 6) return 0;
-    return civil_to_time_t(y, mo, d, h, mi, s);
+
+    // Detectar si el string contiene 'Z' (UTC explícito)
+    bool is_utc = (strchr(str, 'Z') != nullptr);
+
+    if (is_utc) {
+        // Usar algoritmo Hinnant: interpreta como UTC
+        return civil_to_time_t(y, mo, d, h, mi, s);
+    } else {
+        // Usar mktime: interpreta como hora local (TZ = "AST4" = UTC-4)
+        struct tm tm = {};
+        tm.tm_year  = y - 1900;
+        tm.tm_mon   = mo - 1;
+        tm.tm_mday  = d;
+        tm.tm_hour  = h;
+        tm.tm_min   = mi;
+        tm.tm_sec   = s;
+        tm.tm_isdst = 0;
+        return mktime(&tm);
+    }
 }
 
 /** Formatea un time_t UTC a string legible (para logging) */

@@ -353,8 +353,9 @@ static const char* ATTR_LOCKOUT_DURATION = "lockoutDuration";
   ]
 }
 ```
-- Cada PIN tiene `activacion` y `expiracion` (UTC ISO 8601)
-- El parse en `credentials.cpp` usa `DynamicJsonDocument(16384)` en DRAM + algoritmo Hinnant para UTC sin mktime
+- Cada PIN tiene `activacion` y `expiracion` — **el servidor envía hora local de República Dominicana (AST, UTC-4) SIN sufijo 'Z'**
+- `parse_iso8601` detecta sufijo 'Z': con 'Z' → UTC (algoritmo Hinnant); sin 'Z' → hora local (mktime, respeta TZ="AST4")
+- El parse en `credentials.cpp` usa `DynamicJsonDocument(16384)` en DRAM
 - **NO usar `#include <esp_heap_caps.h>`** — es header pesado IDF que causa CreateProcess en Windows MSYS2
 - TB puede enviar el valor como string escapado o como JSON nativo — ambos soportados
 - Constructor ThingsBoard: `ThingsBoardSized<128> tb(mqttClient, receive=16384, send=2048, stack=2048, apis)` — receive PRIMERO, send SEGUNDO (orden fácil de confundir)
