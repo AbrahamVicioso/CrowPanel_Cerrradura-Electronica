@@ -465,20 +465,46 @@ bool credentials_validate_pin(const String& pin);
 ```cpp
 // Estructura para tag NFC
 typedef struct {
-    uint8_t uid[10];
+    uint8_t uid[NFC_UID_MAX_LENGTH];  // 7 bytes max
     uint8_t uidLength;
-    uint8_t sak;
-    uint8_t atqa[2];
+    uint8_t sak;   // 0x20/0x28=ISO-DEP(HCE), 0x08=MIFARE 1K, 0x18=MIFARE 4K
+    bool    valid;
 } NfcTag;
 
 // Verificación de UID autorizado
-bool nfc_is_authorized(const NfcTag* tag) {
-    if (!nfc_enabled) return false;
-
-    String tagUid = nfc_tag_to_string(tag);
-    return (tagUid == authorized_uid);
-}
+bool nfc_is_authorized(const NfcTag* tag);
 ```
+
+### NFC HCE (Host Card Emulation) — Smartphone
+```cpp
+// AID de la app móvil
+#define HCE_AID { 0xF0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 }
+
+// Lectura de credencial via HCE
+bool nfc_read_hce_payload(char* buffer, uint16_t maxLen);
+```
+
+**Flujo HCE completo:**
+1. `readPassiveTargetID()` → `InListPassiveTarget` → detecta phone, SAK=0x20
+2. `nfc_in_data_exchange()` → `InDataExchange (0x40)` → PN532 envía RATS automáticamente
+3. SELECT AID APDU → phone responde JSON + SW `90 00`
+
+**JSON esperado del phone:** `{"credencial":{"pin":"XXXXXX"}}`
+
+**⚠️ Reglas críticas PN532 + HCE:**
+- **NO enviar RATS manual** — `InDataExchange` lo hace automáticamente para targets ISO 14443-4 (SAK bit 6 set)
+- **`InCommunicateThru` (0x42) NO funciona** después de `InListPassiveTarget` — opera fuera del target management interno, causa timeout
+- **`InATR` (0x50) es solo NFC-DEP** (P2P) — PN532 devuelve NACK para targets ISO 14443-4
+- **Adafruit library `inDataExchange()`** no expone error codes — usamos `nfc_in_data_exchange()` custom con debug
+- **Frame response PN532**: `[RDY][00][00][FF][LEN][LCS][D5][41][Status][data...]` — LEN está en `buf[i-2]` relativo a D5
+- **Wire I2C buffer**: 128 bytes mínimo para JSON + framing PN532
+- **SW `6A 82`** = app not found — servicio HCE no activo o no es default payment app
+
+**Requisitos Android:**
+- `apdu_service.xml`: AID `F0010203040506`, categoría `payment`
+- App debe ser **default contactless payment app** en Settings → NFC
+- `requireDeviceUnlock="false"` para funcionar con pantalla bloqueada
+- Categoría `other` requiere pantalla encendida; `payment` funciona con pantalla apagada
 
 ## 💾 Sistema de Almacenamiento
 
