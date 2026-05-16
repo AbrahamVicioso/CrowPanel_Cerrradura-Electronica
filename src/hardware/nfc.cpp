@@ -7,15 +7,9 @@
 #include "../config/pins.h"
 #include <Wire.h>
 
-// Instancia del lector PN532 (I2C)
 static Adafruit_PN532 nfc(NFC_SDA, NFC_SCL);
 
-// UID autorizado (vacío = aceptar cualquier tarjeta)
-static char authorized_uid[25] = "";  // "AA:BB:CC:DD:EE:FF:GG\0"
-
-// ────────────────────────────────────────────────────────────
-//  Inicialización
-// ────────────────────────────────────────────────────────────
+static char authorized_uid[25] = "";
 
 bool nfc_init(void)
 {
@@ -37,10 +31,6 @@ bool nfc_init(void)
     return true;
 }
 
-// ────────────────────────────────────────────────────────────
-//  Lectura de tarjeta
-// ────────────────────────────────────────────────────────────
-
 bool nfc_read_tag(NfcTag* tag)
 {
     if (!tag) return false;
@@ -48,7 +38,6 @@ bool nfc_read_tag(NfcTag* tag)
     uint8_t uid[NFC_UID_MAX_LENGTH] = {0};
     uint8_t uidLength = 0;
 
-    // Timeout 20ms para no bloquear el loop principal
     bool success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A,
                                             uid, &uidLength, 20);
 
@@ -73,10 +62,6 @@ bool nfc_read_tag(NfcTag* tag)
     return true;
 }
 
-// ────────────────────────────────────────────────────────────
-//  Autorización por UID
-// ────────────────────────────────────────────────────────────
-
 void nfc_set_authorized_uid(const char* uid_hex)
 {
     if (!uid_hex) {
@@ -86,7 +71,6 @@ void nfc_set_authorized_uid(const char* uid_hex)
     strncpy(authorized_uid, uid_hex, sizeof(authorized_uid) - 1);
     authorized_uid[sizeof(authorized_uid) - 1] = '\0';
 
-    // Convertir a mayúsculas
     for (int i = 0; authorized_uid[i]; i++) {
         if (authorized_uid[i] >= 'a' && authorized_uid[i] <= 'f')
             authorized_uid[i] -= 32;
@@ -103,10 +87,8 @@ bool nfc_is_authorized(const NfcTag* tag)
 {
     if (!tag || !tag->valid) return false;
 
-    // Sin UID configurado → RECHAZAR por defecto (para obligar a usar el JSON o configurar un UID explicitamente)
     if (strlen(authorized_uid) == 0) return false;
 
-    // Convertir UID leído a string sin separadores
     String tagStr = "";
     for (int i = 0; i < tag->uidLength; i++) {
         if (tag->uid[i] < 0x10) tagStr += "0";
@@ -114,7 +96,6 @@ bool nfc_is_authorized(const NfcTag* tag)
     }
     tagStr.toUpperCase();
 
-    // Convertir UID autorizado a string sin separadores
     String authStr = String(authorized_uid);
     authStr.replace(":", "");
     authStr.replace(" ", "");
@@ -127,10 +108,6 @@ bool nfc_is_authorized(const NfcTag* tag)
                   authorized ? "ACEPTADO" : "RECHAZADO");
     return authorized;
 }
-
-// ────────────────────────────────────────────────────────────
-//  Utilidades
-// ────────────────────────────────────────────────────────────
 
 String nfc_uid_to_string(const NfcTag* tag)
 {
@@ -155,154 +132,180 @@ void nfc_print_uid(uint8_t* uid, uint8_t uidLength)
 }
 
 // ────────────────────────────────────────────────────────────
-//  Activación ISO-DEP (interna)
+//  InDataExchange con debug — ver error code real del PN532
 // ────────────────────────────────────────────────────────────
-
-// Envía el comando InAtr (0x50) al PN532, que a su vez envía RATS al target
-// y establece el canal ISO 14443-4. Debe llamarse después de readPassiveTargetID.
-// Ref: PN532 UM10232 §7.3.11 InAtr
-static bool nfc_activate_isodep(void)
+//
+// La library Adafruit retorna false si pn532_packetbuffer[7] & 0x3f != 0
+// pero no expone el error code. Reimplementamos para ver el error.
+//
+// Según PN532 UM10232 §7.3.8: InDataExchange ENVÍA RATS automáticamente
+// al primer APDU si el target es ISO 14443-4 (SAK bit 6 set).
+// No necesita InATR ni InCommunicateThru manual.
+static bool nfc_in_data_exchange(uint8_t *send, uint8_t sendLen,
+                                  uint8_t *response, uint8_t *respLen)
 {
-    // InAtr: [cmd=0x50][Tg=1][NextRf=0x00][GiLength=0]
-    // Envía RATS al target y establece canal ISO 14443-4
-    uint8_t cmd[] = { 0x50, 0x01, 0x00, 0x00 };
+    // Construir frame: [0x40][Tg][data...]
+    uint8_t cmd[2 + sendLen];
+    cmd[0] = 0x40;  // InDataExchange
+    cmd[1] = 0x01;  // Target #1
+    memcpy(&cmd[2], send, sendLen);
 
-    if (!nfc.sendCommandCheckAck(cmd, sizeof(cmd), 1000)) {
-        Serial.println("[NFC] InAtr: command timeout");
+    if (!nfc.sendCommandCheckAck(cmd, 2 + sendLen, 1000)) {
+        Serial.println("[NFC] InDataExchange: ACK timeout");
         return false;
     }
 
-    // readdata() es privado — leer respuesta InAtr directamente via Wire
-    // I2C PN532 packet: [status][00][00][FF][LEN][LCS][D5][51][Err][Tg][ATS...]
-    //  byte 0: status RDY (descartado)
-    //  byte 1-3: preamble + start code (descartados)
-    //  byte 4-5: LEN + LCS (descartados)
-    //  byte 6: TFI 0xD5 (descartado)
-    //  byte 7: respuesta InAtr = 0x51
-    //  byte 8: Err (0x00 = OK)
-    Wire.requestFrom((uint8_t)PN532_I2C_ADDRESS, (uint8_t)10);
-    if (Wire.available() < 9) {
-        Serial.println("[NFC] InAtr: respuesta incompleta");
-        while (Wire.available()) Wire.read();
-        return false;
+    // Poll RDY
+    bool ready = false;
+    uint32_t t0 = millis();
+    while (millis() - t0 < 2000) {
+        Wire.requestFrom((uint8_t)PN532_I2C_ADDRESS, (uint8_t)1);
+        if (Wire.available() && (Wire.read() & 0x01)) { ready = true; break; }
+        delay(10);
     }
-    for (int i = 0; i < 7; i++) Wire.read();  // descarta status + preamble + TFI
-    uint8_t cmdResp = Wire.read();  // debe ser 0x51
-    uint8_t err     = Wire.read();  // 0x00 = éxito
-    while (Wire.available()) Wire.read();  // vaciar resto (Tg, ATS...)
-
-    if (cmdResp != 0x51 || err != 0x00) {
-        Serial.printf("[NFC] InAtr error: cmd=%02X err=%02X\n", cmdResp, err);
+    if (!ready) {
+        Serial.println("[NFC] InDataExchange: RDY timeout");
         return false;
     }
 
-    Serial.println("[NFC] ISO-DEP activado (RATS OK)");
-    return true;
+    // Leer respuesta completa (JSON ~40 bytes + PN532 frame ~10 bytes)
+    // Wire I2C buffer en ESP32 es 128 bytes por defecto
+    uint8_t buf[128];
+    Wire.requestFrom((uint8_t)PN532_I2C_ADDRESS, (uint8_t)sizeof(buf));
+    uint8_t n = 0;
+    while (Wire.available() && n < sizeof(buf)) {
+        buf[n++] = Wire.read();
+    }
+
+    // Buscar frame: D5 41 [Status] [data...]
+    for (uint8_t i = 0; i + 2 < n; i++) {
+        if (buf[i] == 0xD5 && buf[i + 1] == 0x41) {
+            uint8_t status = buf[i + 2];
+            Serial.printf("[NFC] InDataExchange status: 0x%02X\n", status);
+
+            if ((status & 0x3F) != 0) {
+                Serial.printf("[NFC] PN532 error code: 0x%02X — ", status & 0x3F);
+                switch (status & 0x3F) {
+                    case 0x01: Serial.println("Timeout"); break;
+                    case 0x02: Serial.println("CRC Error"); break;
+                    case 0x03: Serial.println("Parity Error"); break;
+                    case 0x05: Serial.println("Framing Error"); break;
+                    case 0x06: Serial.println("Collision"); break;
+                    case 0x0A: Serial.println("Buffer Overflow"); break;
+                    case 0x0D: Serial.println("RF Protocol Error"); break;
+                    case 0x29: Serial.println("DEP Protocol Error"); break;
+                    default:   Serial.println("Unknown"); break;
+                }
+                // Dump raw para debug
+                Serial.printf("[NFC] Raw response (%d bytes): ", n);
+                nfc.PrintHex(buf, min(n, (uint8_t)32));
+                return false;
+            }
+
+            // Éxito — extraer data (todo después del status byte)
+            // Frame: [RDY][00][00][FF][LEN][LCS][D5][41][Status][...data...][DCS][00]
+            //  index:   0    1    2    3    4     5    6    7       8
+            // LEN está en buf[i-2] (2 bytes antes de D5 = index 4)
+            uint8_t frameLen = (i >= 2) ? buf[i - 2] : 0;
+            // frameLen incluye TFI(1)+cmd(1)+status(1)+data = 3+dataLen
+            uint8_t dataLen = (frameLen > 3) ? frameLen - 3 : 0;
+            if (dataLen > *respLen) dataLen = *respLen;
+            if (i + 3 + dataLen > n) dataLen = (i + 3 < n) ? n - i - 3 : 0;
+
+            memcpy(response, &buf[i + 3], dataLen);
+            *respLen = dataLen;
+            return true;
+        }
+    }
+
+    Serial.printf("[NFC] InDataExchange: no D5 41 found (%d bytes)\n", n);
+    nfc.PrintHex(buf, min(n, (uint8_t)32));
+    return false;
 }
 
 // ────────────────────────────────────────────────────────────
 //  Lectura JSON via HCE (smartphone)
 // ────────────────────────────────────────────────────────────
-
+//
+// Flujo:
+// 1. readPassiveTargetID() → InListPassiveTarget → target ISO 14443-3
+// 2. nfc_in_data_exchange() → InDataExchange → PN532 envía RATS auto
+//    si SAK bit6 set → SELECT AID APDU → phone responde JSON + SW 9000
 bool nfc_read_hce_payload(char* buffer, uint16_t maxLen)
 {
     if (!buffer || maxLen < 2) return false;
 
-    // Activar canal ISO-DEP (envía RATS) antes de cualquier APDU
-    if (!nfc_activate_isodep()) {
-        return false;
-    }
-
     uint8_t aid[] = HCE_AID;
     const uint8_t aidLen = sizeof(aid);
+
+    // SELECT AID APDU: CLA INS P1 P2 Lc [AID] Le
+    uint8_t selectCmd[6 + aidLen];
+    selectCmd[0] = 0x00;          // CLA
+    selectCmd[1] = 0xA4;          // INS = SELECT
+    selectCmd[2] = 0x04;          // P1  = Select by name
+    selectCmd[3] = 0x00;          // P2  = First occurrence
+    selectCmd[4] = aidLen;        // Lc  = AID length
+    memcpy(&selectCmd[5], aid, aidLen);
+    selectCmd[5 + aidLen] = 0x00; // Le  = Accept any length
+
+    const uint8_t selectLen = 6 + aidLen;
+
+    Serial.printf("[NFC] SELECT AID (%d bytes): ", selectLen);
+    nfc.PrintHex(selectCmd, selectLen);
+
     uint8_t response[255];
     uint8_t respLen = sizeof(response);
 
-    // Intentar primero con AID personalizado
-    // Si falla, intentar con AID NDEF estándar
-    Serial.println("[NFC] SELECT personalizado F0010203040506...");
-    uint8_t cmd[6 + aidLen];
-    cmd[0] = 0x00; cmd[1] = 0xA4; cmd[2] = 0x04; cmd[3] = 0x00;
-    cmd[4] = aidLen;
-    memcpy(&cmd[5], aid, aidLen);
-    cmd[5 + aidLen] = 0x00;
-
-    nfc.PrintHex(cmd, sizeof(cmd));
-    bool ok = nfc.inDataExchange(cmd, sizeof(cmd), response, &respLen);
+    bool ok = nfc_in_data_exchange(selectCmd, selectLen, response, &respLen);
 
     if (!ok) {
-        Serial.println("[NFC] SELECT NDEF estándar...");
-        uint8_t ndef_aid[] = { 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00 };
-        uint8_t cmd2[6 + 8];
-        cmd2[0] = 0x00; cmd2[1] = 0xA4; cmd2[2] = 0x04; cmd2[3] = 0x00;
-        cmd2[4] = 8;
-        memcpy(&cmd2[5], ndef_aid, 8);
-        cmd2[5 + 8] = 0x00;
-        
-        nfc.PrintHex(cmd2, sizeof(cmd2));
-        ok = nfc.inDataExchange(cmd2, sizeof(cmd2), response, &respLen);
-    }
-
-    if (!ok) {
-        Serial.print("[NFC] ERROR: ");
-        nfc.PrintHex(response, min(respLen, (uint8_t)4));
         return false;
     }
 
-    Serial.printf("[NFC] HCE respuesta (%u bytes): ", respLen);
-    nfc.PrintHexChar(response, respLen);
+    Serial.printf("[NFC] HCE respuesta (%d bytes)\n", respLen);
 
-    // Verificar Status Word: últimos 2 bytes deben ser 90 00
-    if (respLen < 2 || response[respLen - 2] != 0x90 || response[respLen - 1] != 0x00) {
-        Serial.printf("[NFC] HCE SW inválido: %02X %02X\n",
-                      respLen >= 2 ? response[respLen - 2] : 0,
-                      respLen >= 1 ? response[respLen - 1] : 0);
+    if (respLen < 2) {
+        Serial.println("[NFC] Respuesta muy corta");
         return false;
     }
 
-    // Extraer cuerpo JSON (todo antes del SW)
-    uint8_t jsonLen = respLen - 2;
-    if (jsonLen == 0) return false;
+    uint8_t sw1 = response[respLen - 2];
+    uint8_t sw2 = response[respLen - 1];
+    Serial.printf("[NFC] SW: %02X %02X\n", sw1, sw2);
 
+    if (sw1 != 0x90 || sw2 != 0x00) {
+        Serial.printf("[NFC] Status inválido (esperado 9000, recibido %02X%02X)\n", sw1, sw2);
+        return false;
+    }
+
+    uint16_t jsonLen = respLen - 2;
     uint16_t copyLen = (jsonLen < maxLen - 1) ? jsonLen : (maxLen - 1);
     memcpy(buffer, response, copyLen);
     buffer[copyLen] = '\0';
 
-    Serial.printf("[NFC] HCE payload recibido (%u bytes)\n", copyLen);
+    Serial.printf("[NFC] HCE payload (%u bytes): %s\n", copyLen, buffer);
     return true;
 }
-
-// ────────────────────────────────────────────────────────────
-//  Lectura JSON desde MIFARE Classic 1K
-// ────────────────────────────────────────────────────────────
 
 bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen)
 {
     if (!tag || !tag->valid || !buffer || maxLen < 2) return false;
 
-    // Llave estándar NFC Forum para sectores NDEF (sectores 1-15)
     uint8_t ndefKey[6] = { 0xD3, 0xF7, 0xD3, 0xF7, 0xD3, 0xF7 };
 
     uint16_t bufPos    = 0;
-    bool     started   = false;  // ¿Se encontró el primer '{'?
-    int      depth     = 0;      // Profundidad de anidamiento de llaves
+    bool     started   = false;
+    int      depth     = 0;
 
-    // Empezar desde el bloque 4 (sector 1).
-    // Sector 0 (bloques 0-3): fabricante + MAD, no contiene datos NDEF útiles.
-    // MIFARE Classic 1K: 64 bloques totales (0-63).
-    // Trailer blocks (llaves): bloques 3, 7, 11, 15, … → bloque%4==3 → saltar.
     for (uint8_t block = 4; block < 64 && bufPos < (uint16_t)(maxLen - 1); block++) {
 
-        // Saltar trailer block
         if ((block % 4) == 3) continue;
 
-        // Al entrar a un nuevo sector, autenticar con llave NDEF
         if ((block % 4) == 0) {
             bool auth = nfc.mifareclassic_AuthenticateBlock(
                 (uint8_t*)tag->uid, tag->uidLength,
-                block, 0 /*key A*/, ndefKey);
+                block, 0, ndefKey);
             if (!auth) {
-                // Fallo de autenticación: tarjeta retirada o fin de datos
                 Serial.printf("[NFC] Auth falló en bloque %d\n", block);
                 break;
             }
@@ -314,12 +317,10 @@ bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen)
             break;
         }
 
-        // Procesar los 16 bytes del bloque
         for (int i = 0; i < 16 && bufPos < (uint16_t)(maxLen - 1); i++) {
             uint8_t c = blockData[i];
 
             if (!started) {
-                // Descartar metadata NDEF hasta encontrar el primer '{'
                 if (c == '{') {
                     started = true;
                     depth   = 1;
@@ -328,14 +329,12 @@ bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen)
                 continue;
             }
 
-            // JSON en progreso: rastrear profundidad de llaves
             if      (c == '{') depth++;
             else if (c == '}') depth--;
 
             buffer[bufPos++] = c;
 
             if (depth == 0) {
-                // JSON completo — salir inmediatamente (fail-fast)
                 buffer[bufPos] = '\0';
                 Serial.printf("[NFC] JSON extraído (%u bytes)\n", bufPos);
                 return true;
@@ -343,6 +342,5 @@ bool nfc_read_json_payload(const NfcTag* tag, char* buffer, uint16_t maxLen)
         }
     }
 
-    // El bucle terminó sin encontrar JSON completo
     return false;
 }
